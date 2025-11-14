@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "makeprov"
+version = "0.1.0"
+description = "An RDF provenance tracking library for simple Python workflows"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Benno Kruit", email = "b.b.kruit@amsterdamumc.nl" }]
+keywords = ["provenance", "rdf", "workflow", "python"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/bennokr/makeprov"
+"Documentation" = "https://makeprov.readthedocs.io"
+"Issue Tracker" = "https://github.com/bennokr/makeprov/issues"
+
+[tool.pytape]
+test = "tests/test_makeprov.py"
