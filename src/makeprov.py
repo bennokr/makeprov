@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import get_origin, get_args, get_type_hints, Any
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 import importlib.metadata as im
 
 import rdflib
@@ -98,6 +99,7 @@ class InFile(File):
             return sys.stdin.buffer if "b" in mode else sys.stdin
         if self.path is None:
             raise ValueError("InFile has no path")
+        
         return self.path.open(mode, *args, **kwargs)
 
 
@@ -110,11 +112,19 @@ class OutFile(File):
     def __init__(self, path: str):
         super().__init__(path, stream_name="stdout")
 
+    def as_infile(self) -> InFile:
+        """Convert an OutFile path into a new InFile for downstream steps."""
+        if self.is_stream or self.path is None:
+            raise ValueError("Cannot convert a stream-based OutFile into an InFile")
+        return InFile(str(self.path))
+
     def open(self, mode: str = "w", *args, **kwargs):
         if self.is_stream:
             return sys.stdout.buffer if "b" in mode else sys.stdout
         if self.path is None:
             raise ValueError("OutFile has no path")
+        
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         return self.path.open(mode, *args, **kwargs)
 
 
@@ -123,7 +133,7 @@ class OutFile(File):
 # ----------------------------------------------------------------------
 
 RULES: dict[str, dict[str, Any]] = {}
-
+COMMANDS: set[Callable] = set()
 
 def _caller_script() -> Path:
     mod = sys.modules.get("__main__")
@@ -569,6 +579,7 @@ def rule(
                         prov_exc,
                     )
 
+        COMMANDS.add(wrapped)
         if register_for_build:
             target = outputs[0]
             RULES[target] = {

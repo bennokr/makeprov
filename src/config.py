@@ -2,15 +2,8 @@ from dataclasses import fields, is_dataclass
 import sys, logging, tomllib as toml, defopt
 import argparse
 
-COMMANDS = []
 
-
-def cli(fn):
-    COMMANDS.append(fn)
-    return fn
-
-
-def main(conf_obj, parsers=None):
+def main(subcommands, conf_obj, parsers=None):
     def conf(dc, params):
         for f in fields(dc):
             if f.name in params:
@@ -45,7 +38,7 @@ def main(conf_obj, parsers=None):
     apply_globals(sys.argv[1:])  # apply effects early
     logging.debug(f"Config: {conf_obj}")
     defopt.run(
-        COMMANDS,
+        subcommands,
         parsers=parsers or {},
         argv=sys.argv[1:],
         argparse_kwargs={"parents": [parent]},

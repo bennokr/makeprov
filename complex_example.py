@@ -5,8 +5,8 @@ import csv
 from rdflib import Graph, Literal, Namespace
 from rdflib.namespace import RDF, XSD
 
-from makeprov import GLOBAL_CONFIG, InFile, OutFile, rule
-from config import cli, main
+from makeprov import GLOBAL_CONFIG, InFile, OutFile, rule, COMMANDS
+from config import main
 
 # Configure a dedicated provenance directory for this workflow example.
 GLOBAL_CONFIG.prov_dir = "sales_prov"
@@ -15,29 +15,12 @@ GLOBAL_CONFIG.base_iri = "http://example.org/sales/"
 SALES = Namespace("http://example.org/sales/")
 
 
-def _ensure_parent(out_file: OutFile) -> None:
-    """Create the parent directory for the given OutFile if needed."""
-    if out_file.is_stream or out_file.path is None:
-        return
-    out_file.path.parent.mkdir(parents=True, exist_ok=True)
-
-
-def _as_infile(out_file: OutFile) -> InFile:
-    """Convert an OutFile path into a new InFile for downstream steps."""
-    if out_file.is_stream or out_file.path is None:
-        raise ValueError("Cannot convert a stream-based OutFile into an InFile")
-    return InFile(str(out_file.path))
-
-
 @rule()
-@cli
 def create_seed_data(
     products_csv: OutFile = OutFile("data/products.csv"),
     orders_csv: OutFile = OutFile("data/orders.csv"),
 ) -> None:
     """Write example product and order CSV files used by later steps."""
-    _ensure_parent(products_csv)
-    _ensure_parent(orders_csv)
 
     products = [
         {"product_id": "P-001", "name": "Widget", "unit_price": "19.99"},
@@ -66,7 +49,6 @@ def create_seed_data(
 
 
 @rule()
-@cli
 def build_region_totals(
     products_csv: InFile = InFile("data/products.csv"),
     orders_csv: InFile = InFile("data/orders.csv"),
@@ -90,7 +72,6 @@ def build_region_totals(
             entry["units"] += units
             entry["revenue"] += revenue
 
-    _ensure_parent(totals_csv)
     with totals_csv.open("w", newline="") as handle:
         writer = csv.DictWriter(
             handle,
@@ -108,7 +89,6 @@ def build_region_totals(
 
 
 @rule()
-@cli
 def export_totals_graph(
     totals_csv: InFile = InFile("data/region_totals.csv"),
     graph_ttl: OutFile = OutFile("data/region_totals.ttl"),
@@ -139,7 +119,6 @@ def export_totals_graph(
                 )
             )
 
-    _ensure_parent(graph_ttl)
     with graph_ttl.open("w") as handle:
         handle.write(graph.serialize(format="turtle"))
 
@@ -147,8 +126,7 @@ def export_totals_graph(
     # provenance dataset.
     return graph
 
-
-@cli
+@rule()
 def build_sales_report(
     products_csv: OutFile = OutFile("data/products.csv"),
     orders_csv: OutFile = OutFile("data/orders.csv"),
@@ -158,12 +136,12 @@ def build_sales_report(
     """Run the entire workflow and return the final RDF graph."""
     create_seed_data(products_csv=products_csv, orders_csv=orders_csv)
     build_region_totals(
-        products_csv=_as_infile(products_csv),
-        orders_csv=_as_infile(orders_csv),
+        products_csv=products_csv.as_infile(),
+        orders_csv=orders_csv.as_infile(),
         totals_csv=totals_csv,
     )
-    return export_totals_graph(totals_csv=_as_infile(totals_csv), graph_ttl=graph_ttl)
+    return export_totals_graph(totals_csv=totals_csv.as_infile(), graph_ttl=graph_ttl)
 
 
 if __name__ == "__main__":
-    main(GLOBAL_CONFIG)
+    main(COMMANDS, GLOBAL_CONFIG)

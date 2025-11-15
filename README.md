@@ -1,4 +1,4 @@
-# `makeprov`: Provenance Tracking Made Easy
+# makeprov: Pythonic Provenance Tracking
 
 This library provides a way to track file provenance in Python workflows using RDF and PROV (W3C Provenance) semantics. It supports defining input/output files via decorators and automatically generates provenance datasets.
 
@@ -23,22 +23,25 @@ pip install makeprov
 Here’s an example of how to use this package in your Python scripts:
 
 ```python
-from makeprov import rule, InFile, OutFile
+from makeprov import rule, InFile, OutFile, build
 
 @rule()
-def process_data(input_file: InFile, output_file: OutFile):
+def process_data(
+    input_file: InFile = InFile('input.txt'), 
+    output_file: OutFile = OutFile('output.txt')
+):
     with input_file.open('r') as infile, output_file.open('w') as outfile:
         data = infile.read()
-        outfile.write(data)
+        outfile.write(data.upper())
 
 if __name__ == '__main__':
-    process_data(InFile('input.txt'), OutFile('output.txt'))
+    process_data()
 
-    # or
+    # or as a command line interface
     import defopt
     defopt.run(process_data)
 
-    # or
+    # or as a workflow graph that automatically (re)generates all dependencies
     from makeprov import build
     build('output.txt')
 ```
@@ -46,8 +49,13 @@ if __name__ == '__main__':
 You can execute `example.py` via the CLI like so:
 
 ```bash
-# Set configuration through the CLI
-python example.py --conf='{"base_iri": "http://mybaseiri.org/", "prov_dir": "my_prov_directory"}' --force --input_file input.txt --output_file final_output.txt
+python example.py build-all
+
+# Or set configuration through the CLI
+python example.py build-all --conf='{"base_iri": "http://mybaseiri.org/", "prov_dir": "my_prov_directory"}' --force --input_file input.txt --output_file final_output.txt
+
+# Or set configuration through a TOML file
+python example.py build-all --conf=@my_config.toml
 ```
 
 ### Complex CSV-to-RDF Workflow
@@ -87,7 +95,12 @@ python complex_example.py build-sales-report
 
 ### Configuration
 
-You can customize the provenance tracking with options like `base_iri`, `prov_dir`, and more.
+You can customize the provenance tracking with the following options:
+
+ - `base_iri` (str): Base IRI for new resources
+ - `prov_dir` (str): Directory for writing PROV `.trig` files
+ - `force` (bool): Force running of dependencies
+ - `dry_run` (bool): Only check workflow, don't run anything
 
 ## Contributing
 

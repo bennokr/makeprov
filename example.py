@@ -1,9 +1,8 @@
-from makeprov import rule, InFile, OutFile, GLOBAL_CONFIG
-from config import cli, main
+from makeprov import rule, InFile, OutFile, GLOBAL_CONFIG, COMMANDS
+from config import main
 
 # Define step 1: Preprocess
 @rule()
-@cli
 def preprocess(input_file: InFile, output_file: OutFile):
     with input_file.open('r') as infile, output_file.open('w') as outfile:
         data = infile.read()
@@ -12,7 +11,6 @@ def preprocess(input_file: InFile, output_file: OutFile):
 
 # Define step 2: Process
 @rule()
-@cli
 def process(input_file: InFile, output_file: OutFile):
     with input_file.open('r') as infile, output_file.open('w') as outfile:
         data = infile.read()
@@ -22,7 +20,6 @@ def process(input_file: InFile, output_file: OutFile):
 
 # Define step 3: Postprocess
 @rule()
-@cli
 def postprocess(input_file: InFile, output_file: OutFile):
     with input_file.open('r') as infile, output_file.open('w') as outfile:
         data = infile.readlines()
@@ -32,12 +29,14 @@ def postprocess(input_file: InFile, output_file: OutFile):
         outfile.writelines(data)
 
 # Define the build-all command
-@cli
-def build_all(input_file: InFile, output_file: OutFile):
+@rule()
+def build_all(input_file: InFile=InFile('README.md'), output_file: OutFile=OutFile('data/example.txt')):
     # Run all steps in sequence with inferred provenance
-    preprocess(input_file, OutFile('intermediate.txt'))
-    process(InFile('intermediate.txt'), OutFile('summary.txt'))
-    postprocess(InFile('summary.txt'), output_file)
+    intermediate = OutFile('data/intermediate.txt')
+    summary = OutFile('data/summary.txt')
+    preprocess(input_file, intermediate)
+    process(intermediate.as_infile(), summary)
+    postprocess(summary.as_infile(), output_file)
 
 if __name__ == '__main__':
-    main(GLOBAL_CONFIG)
+    main(COMMANDS, GLOBAL_CONFIG)
