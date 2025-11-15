@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "makeprov"
-version = "0.1.1"
+version = "0.1.2"
 description = "An RDF provenance tracking library for simple Python workflows"
 readme = "README.md"
 license = { text = "MIT" }
@@ -14,6 +14,15 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+]
+dependencies = [
+    "rdflib>=6.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pyshacl>=0.20"
 ]
 
 [project.urls]

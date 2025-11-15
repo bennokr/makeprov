@@ -362,6 +362,7 @@ def _write_provenance_dataset(
     t1_term = rdflib.Literal(t1.isoformat(), datatype=XSD.dateTime)
     D.add((activity, PROV.endedAtTime, t1_term))
 
+    D.add((agent, RDF.type, PROV.Agent))
     D.add((agent, RDF.type, PROV.SoftwareAgent))
     D.add((agent, RDFS.label, rdflib.Literal(script.name)))
     if commit:
