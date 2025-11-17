@@ -7,17 +7,18 @@ from pathlib import Path
 # Platform-appropriate base class for Path subclassing
 _BasePath = type(Path())
 
+
 class ProvPath(_BasePath):
     """
     A Path subclass that understands '-' as a special stream path.
     For subclasses InPath and OutPath, '-' maps to stdin/stdout, respectively.
     """
 
-    def __new__(cls, path: str | bytes | "ProvPath"):
-        raw_path = os.fspath(path)
-        self = super().__new__(cls, path)
+    def __new__(cls, *paths: str | bytes | "ProvPath"):
+        raw_paths = [os.fspath(p) for p in paths]
+        self = super().__new__(cls, *paths)
         # We store stream flags on the instance. Path is immutable, but allows attributes.
-        self._is_stream = raw_path == "-"
+        self._is_stream = len(raw_paths) == 1 and raw_paths[0] == "-"
         self._stream_name = None
         return self
 
@@ -49,8 +50,8 @@ class ProvPath(_BasePath):
 
 class InPath(ProvPath):
     """Marker for input paths. '-' means stdin."""
-    def __new__(cls, path: str | bytes | ProvPath):
-        self = super().__new__(cls, path)
+    def __new__(cls, *paths: str | bytes | ProvPath):
+        self = super().__new__(cls, *paths)
         if self.is_stream:
             self._stream_name = "stdin"
         return self
@@ -63,8 +64,8 @@ class InPath(ProvPath):
 
 class OutPath(ProvPath):
     """Marker for output paths. '-' means stdout."""
-    def __new__(cls, path: str | bytes | ProvPath):
-        self = super().__new__(cls, path)
+    def __new__(cls, *paths: str | bytes | ProvPath):
+        self = super().__new__(cls, *paths)
         if self.is_stream:
             self._stream_name = "stdout"
         return self
