@@ -1,10 +1,12 @@
+import json
+import sys
 import tempfile
 from pathlib import Path
 
 from rdflib import Graph, Literal, Namespace
 from rdflib.namespace import RDF, XSD
 
-from makeprov import InPath, OutPath, ProvenanceConfig, rule
+from makeprov import InPath, OutPath, ProvenanceConfig, build, main, rule
 
 @rule(name="test_process_data")
 def process_data(input_file: InPath, output_file: OutPath):
@@ -65,3 +67,94 @@ def test_rule_returns_graph(tmp_path):
     assert "North" in graph_ttl.read_text()
     print(*TEST_PROV_DIR.glob('*'))
     assert list(TEST_PROV_DIR.glob('*'))
+
+
+def test_build_combines_provenance(tmp_path, monkeypatch):
+    prov_dir = tmp_path / "prov"
+    config = ProvenanceConfig(prov_dir=str(prov_dir))
+
+    @rule(name="combine_step_one", config=config)
+    def step_one(
+        source: InPath = InPath("combine-source.txt"),
+        mid: OutPath = OutPath("combine-mid.txt"),
+    ):
+        with source.open("r") as src, mid.open("w") as dst:
+            dst.write(src.read() + " step1")
+
+    @rule(name="combine_step_two", config=config)
+    def step_two(
+        mid: InPath = InPath("combine-mid.txt"),
+        final: OutPath = OutPath("combine-final.txt"),
+    ):
+        with mid.open("r") as src, final.open("w") as dst:
+            dst.write(src.read() + " step2")
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "combine-source.txt").write_text("data")
+
+    build("combine-final.txt")
+
+    final_output = tmp_path / "combine-final.txt"
+    assert final_output.exists()
+    assert final_output.read_text() == "data step1 step2"
+
+    prov_files = list(prov_dir.glob("*"))
+    assert len(prov_files) == 1
+
+    prov_json = json.loads(prov_files[0].read_text())
+    activities = [
+        node
+        for node in prov_json["provenance"]
+        if node.get("type") == "prov:Activity"
+        or (
+            isinstance(node.get("type"), list)
+            and "prov:Activity" in node.get("type", [])
+        )
+    ]
+
+    assert len(activities) == 2
+
+
+def test_cli_merge_prov(tmp_path, monkeypatch):
+    prov_dir = tmp_path / "prov"
+    intermediate = tmp_path / "cli-mid.txt"
+    final = tmp_path / "cli-final.txt"
+    config = ProvenanceConfig(prov_dir=str(prov_dir))
+
+    @rule(name="cli_merge_one", config=config)
+    def step_one(mid: OutPath = OutPath(intermediate)):
+        with mid.open("w") as dst:
+            dst.write("stage1")
+
+    @rule(name="cli_merge_two", config=config)
+    def step_two(mid: InPath = InPath(intermediate), final: OutPath = OutPath(final)):
+        with mid.open("r") as src, final.open("w") as dst:
+            dst.write(src.read() + " stage2")
+
+    def run_pipeline():
+        step_one()
+        step_two()
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["prog", "--merge-prov", "run-pipeline"])
+
+    main(subcommands=[run_pipeline])
+
+    assert final.exists()
+    assert final.read_text() == "stage1 stage2"
+
+    prov_files = list(prov_dir.glob("*"))
+    assert len(prov_files) == 1
+
+    prov_json = json.loads(prov_files[0].read_text())
+    activities = [
+        node
+        for node in prov_json["provenance"]
+        if node.get("type") == "prov:Activity"
+        or (
+            isinstance(node.get("type"), list)
+            and "prov:Activity" in node.get("type", [])
+        )
+    ]
+
+    assert len(activities) == 2

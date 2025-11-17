@@ -93,6 +93,12 @@ class ProvDoc(JSONLDMixin):
     provenance: list[Any] = field(default_factory=list)
     __context__ = COMMON_CONTEXT
 
+
+@dataclass
+class ProvResult:
+    prov: "Prov"
+    result: Any | None = None
+
 # ---------- helpers ----------
 
 def _safe_cmd(argv: list[str]) -> str | None:
@@ -275,7 +281,7 @@ class Prov:
                 norm = pep503_normalize(pkg_name)
                 dep_iri = f"https://pypi.org/project/{norm}/"
                 reqs.append(DepNode(id=dep_iri, type="rdfs:Resource", label=spec_str))
-                self.env_node = EnvNode(
+            self.env_node = EnvNode(
                 id=env_id,
                 type=["prov:Entity", "prov:Collection"],
                 label="Python environment",
@@ -288,46 +294,110 @@ class Prov:
                 self.activity.used = []
             self.activity.used.append(env_id)
 
+    def to_doc(self, *, include_graph_meta: bool = False) -> ProvDoc:
+        provenance: list[Any] = [
+            self.activity,
+            self.agent,
+            *self.output_nodes,
+            *([self.env_node] if self.env_node else []),
+        ]
+
+        if include_graph_meta:
+            provenance.append(self.graph_meta)
+
+        return ProvDoc(provenance=provenance)
+
+    def to_dataset(self, result=None):
+        import rdflib
+
+        ds = rdflib.Dataset()
+        ds.bind("", self.base_iri)
+        default_graph = ds.default_context
+
+        for triple in self.to_doc(include_graph_meta=True).to_graph():
+            default_graph.add(triple)
+
+        if result is not None and isinstance(result, (rdflib.Graph, rdflib.Dataset)):
+            gx = ds.get_context(self.graph_id)
+            for triple in result:
+                gx.add(triple)
+
+        return ds
 
     def write(self, prov_path: str | Path, result=None, fmt="json", jsonld_with_context=False) -> Path:
         out = Path(prov_path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        # Assemble document
-        doc = ProvDoc(
-            provenance=[
-                self.activity,
-                self.agent,
-                *self.output_nodes,
-                *([self.env_node] if self.env_node else [])
-            ]
-        )
         if fmt == "json":
-            data = doc.to_jsonld(with_context=jsonld_with_context)
+            data = self.to_doc().to_jsonld(with_context=jsonld_with_context)
             if result is not None and isinstance(result, JSONLDMixin):
-                data["result"] = result.to_jsonld(with_context=jsonld_with_context)
+                data["result"] = [result.to_jsonld(with_context=jsonld_with_context)]
             final = out.with_suffix(".json")
             logging.info("Writing JSON-LD provenance %s", final)
             final.write_text(json.dumps(data, indent=2), encoding="utf-8")
             return final
         elif fmt == "trig":
-            import rdflib
-            
-            ds = rdflib.Dataset()
-            ds.bind("", self.base_iri)
-            D = ds.default_context
-            doc.provenance.append(self.graph_meta)
-            for triple in doc.to_graph():
-                D.add(triple)
-            
-            if result is not None:
-                if isinstance(result, (rdflib.Graph, rdflib.Dataset)):
-                    gx = ds.get_context(self.graph_id)
-                    for triple in result:
-                        gx.add(triple)
+            ds = self.to_dataset(result=result)
 
             final = out.with_suffix(".trig")
             logging.info("Writing TRIG provenance %s", final)
             ds.serialize(final, format="trig")
+            return final
 
         else:
             raise Exception(f"No handler to write Prov object in format '{fmt}'")
+
+
+def write_combined_prov(
+    provs: list[ProvResult],
+    prov_path: str | Path,
+    fmt: str = "json",
+    jsonld_with_context: bool = False,
+):
+    if not provs:
+        raise ValueError("No provenance objects provided for combination")
+
+    out = Path(prov_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    if fmt == "json":
+        combined_doc = ProvDoc(provenance=[])
+        for prov_result in provs:
+            combined_doc.provenance.extend(prov_result.prov.to_doc().provenance)
+
+        data = combined_doc.to_jsonld(with_context=jsonld_with_context)
+        data["result"] = []
+
+        for prov_result in provs:
+            if isinstance(prov_result.result, JSONLDMixin):
+                data["result"].append(
+                    prov_result.result.to_jsonld(with_context=jsonld_with_context)
+                )
+
+        final = out.with_suffix(".json")
+        logging.info("Writing combined JSON-LD provenance %s", final)
+        final.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return final
+
+    if fmt == "trig":
+        import rdflib
+
+        ds = rdflib.Dataset()
+
+        for prov_result in provs:
+            ds.bind("", prov_result.prov.base_iri)
+            default_graph = ds.default_context
+
+            for triple in prov_result.prov.to_doc(include_graph_meta=True).to_graph():
+                default_graph.add(triple)
+
+            if isinstance(prov_result.result, (rdflib.Graph, rdflib.Dataset)):
+                gx = ds.get_context(prov_result.prov.graph_id)
+                for triple in prov_result.result:
+                    gx.add(triple)
+
+        final = out.with_suffix(".trig")
+        logging.info("Writing combined TRIG provenance %s", final)
+        ds.serialize(final, format="trig")
+        return final
+
+    raise Exception(f"No handler to write combined Prov objects in format '{fmt}'")

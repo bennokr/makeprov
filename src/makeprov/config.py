@@ -10,14 +10,16 @@ ProvFormat = Literal["json", "trig"]
 class ProvenanceConfig:
     base_iri: str = "http://example.org/"
     prov_dir: str = "prov"
+    prov_path: str | None = None
     force: bool = False
     dry_run: bool = False
     out_fmt: ProvFormat = "json"
+    jsonld_with_context: bool = False
 
 GLOBAL_CONFIG = ProvenanceConfig()
 
 def main(subcommands=None, conf_obj=None, parsers=None):
-    from .core import COMMANDS
+    from .core import COMMANDS, flush_prov_buffer, start_prov_buffer
     
     subcommands = subcommands or COMMANDS
     conf_obj = conf_obj or GLOBAL_CONFIG
@@ -53,11 +55,25 @@ def main(subcommands=None, conf_obj=None, parsers=None):
             logging.debug(f"Setting config {p}")
             conf(conf_obj, p)
 
-    apply_globals(sys.argv[1:])  # apply effects early
-    logging.debug(f"Config: {conf_obj}")
-    defopt.run(
-        subcommands,
-        parsers=parsers or {},
-        argv=sys.argv[1:],
-        argparse_kwargs={"parents": [parent]},
+        return ns
+
+    parent.add_argument(
+        "--merge-prov",
+        action="store_true",
+        help="Merge provenance from invoked commands into a single output",
     )
+
+    ns = apply_globals(sys.argv[1:])  # apply effects early
+    logging.debug(f"Config: {conf_obj}")
+    try:
+        if ns.merge_prov:
+            start_prov_buffer()
+        defopt.run(
+            subcommands,
+            parsers=parsers or {},
+            argv=sys.argv[1:],
+            argparse_kwargs={"parents": [parent]},
+        )
+    finally:
+        if ns.merge_prov:
+            flush_prov_buffer()

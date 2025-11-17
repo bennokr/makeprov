@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -13,9 +14,10 @@ class ProvPath(_BasePath):
     """
 
     def __new__(cls, path: str | bytes | "ProvPath"):
+        raw_path = os.fspath(path)
         self = super().__new__(cls, path)
         # We store stream flags on the instance. Path is immutable, but allows attributes.
-        self._is_stream = str(self) == "-"
+        self._is_stream = raw_path == "-"
         self._stream_name = None
         return self
 
