@@ -1,6 +1,6 @@
 # makeprov: Pythonic Provenance Tracking
 
-This library provides a way to track file provenance in Python workflows using RDF and PROV (W3C Provenance) semantics. It supports defining input/output files via decorators and automatically generates provenance datasets.
+This library provides a way to track file provenance in Python workflows using PROV (W3C Provenance) semantics. It supports defining input/output files via decorators and automatically generates provenance datasets.
 
 ## Features
 
@@ -8,7 +8,7 @@ This library provides a way to track file provenance in Python workflows using R
 - Automatically generate RDF-based provenance metadata.
 - Handles input and output streams.
 - Integrates with Python's type hints for easy configuration.
-- Outputs provenance data in TRIG format.
+- Outputs provenance data in TRIG format if `rdflib` is installed; otherwise outputs json-ld.
 
 ## Installation
 
@@ -23,12 +23,12 @@ pip install makeprov
 Here’s an example of how to use this package in your Python scripts:
 
 ```python
-from makeprov import rule, InFile, OutFile, build
+from makeprov import rule, InPath, OutPath, build
 
 @rule()
 def process_data(
-    input_file: InFile = InFile('input.txt'), 
-    output_file: OutFile = OutFile('output.txt')
+    input_file: InPath = InPath('input.txt'), 
+    output_file: OutPath = OutPath('output.txt')
 ):
     with input_file.open('r') as infile, output_file.open('w') as outfile:
         data = infile.read()
@@ -65,8 +65,8 @@ For a more involved scenario, see [`complex_example.py`](complex_example.py). It
 ```python
 @rule()
 def export_totals_graph(
-    totals_csv: InFile = InFile("data/region_totals.csv"),
-    graph_ttl: OutFile = OutFile("data/region_totals.ttl"),
+    totals_csv: InPath = InPath("data/region_totals.csv"),
+    graph_ttl: OutPath = OutPath("data/region_totals.ttl"),
 ) -> Graph:
     graph = Graph()
     graph.bind("sales", SALES)
@@ -98,7 +98,7 @@ python complex_example.py build-sales-report
 You can customize the provenance tracking with the following options:
 
  - `base_iri` (str): Base IRI for new resources
- - `prov_dir` (str): Directory for writing PROV `.trig` files
+ - `prov_dir` (str): Directory for writing PROV `.json-ld` or `.trig` files
  - `force` (bool): Force running of dependencies
  - `dry_run` (bool): Only check workflow, don't run anything
 

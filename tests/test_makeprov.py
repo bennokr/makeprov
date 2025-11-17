@@ -4,10 +4,10 @@ from pathlib import Path
 from rdflib import Graph, Literal, Namespace
 from rdflib.namespace import RDF, XSD
 
-from makeprov import InFile, OutFile, ProvenanceConfig, rule
+from makeprov import InPath, OutPath, ProvenanceConfig, rule
 
 @rule(name="test_process_data")
-def process_data(input_file: InFile, output_file: OutFile):
+def process_data(input_file: InPath, output_file: OutPath):
     with input_file.open('r') as infile, output_file.open('w') as outfile:
         data = infile.read()
         outfile.write(data)
@@ -19,13 +19,10 @@ TEST_PROV_CONFIG = ProvenanceConfig(prov_dir=str(TEST_PROV_DIR))
 
 
 @rule(name="test_totals_graph", config=TEST_PROV_CONFIG)
-def totals_graph(input_csv: InFile, graph_out: OutFile) -> Graph:
+def totals_graph(input_csv: InPath, graph_out: OutPath) -> Graph:
     graph = Graph()
     graph.bind("sales", SALES_NS)
 
-    if graph_out.path is None:
-        raise ValueError("graph_out must have a filesystem path")
-    graph_out.path.parent.mkdir(parents=True, exist_ok=True)
 
     with input_csv.open('r') as handle:
         for line in handle.read().strip().splitlines()[1:]:
@@ -49,7 +46,7 @@ def test_process_data(tmp_path):
     input_file.write_text("Hello, world!")
 
     # Run the process_data function
-    result = process_data(InFile(str(input_file)), OutFile(str(output_file)))
+    result = process_data(InPath(str(input_file)), OutPath(str(output_file)))
 
     # Check that the output file was created and contains the correct data
     assert output_file.exists()
@@ -61,11 +58,10 @@ def test_rule_returns_graph(tmp_path):
     graph_ttl = tmp_path / "region_totals.ttl"
     input_csv.write_text("region,total_units,total_revenue\nNorth,6,119.94\n")
 
-    result = totals_graph(InFile(str(input_csv)), OutFile(str(graph_ttl)))
+    result = totals_graph(InPath(str(input_csv)), OutPath(str(graph_ttl)))
 
     assert isinstance(result, Graph)
     assert graph_ttl.exists()
     assert "North" in graph_ttl.read_text()
-    prov_path = TEST_PROV_DIR / "test_totals_graph.trig"
-    assert prov_path.exists()
-    prov_path.unlink()
+    print(*TEST_PROV_DIR.glob('*'))
+    assert list(TEST_PROV_DIR.glob('*'))

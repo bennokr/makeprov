@@ -5,20 +5,20 @@ import csv
 from rdflib import Graph, Literal, Namespace
 from rdflib.namespace import RDF, XSD
 
-from makeprov import GLOBAL_CONFIG, InFile, OutFile, rule, COMMANDS
-from config import main
+from makeprov import GLOBAL_CONFIG, InPath, OutPath, rule, main
 
 # Configure a dedicated provenance directory for this workflow example.
 GLOBAL_CONFIG.prov_dir = "sales_prov"
 GLOBAL_CONFIG.base_iri = "http://example.org/sales/"
+GLOBAL_CONFIG.out_fmt = "trig"
 
 SALES = Namespace("http://example.org/sales/")
 
 
 @rule()
 def create_seed_data(
-    products_csv: OutFile = OutFile("data/products.csv"),
-    orders_csv: OutFile = OutFile("data/orders.csv"),
+    products_csv: OutPath = OutPath("data/products.csv"),
+    orders_csv: OutPath = OutPath("data/orders.csv"),
 ) -> None:
     """Write example product and order CSV files used by later steps."""
 
@@ -50,9 +50,9 @@ def create_seed_data(
 
 @rule()
 def build_region_totals(
-    products_csv: InFile = InFile("data/products.csv"),
-    orders_csv: InFile = InFile("data/orders.csv"),
-    totals_csv: OutFile = OutFile("data/region_totals.csv"),
+    products_csv: InPath = InPath("data/products.csv"),
+    orders_csv: InPath = InPath("data/orders.csv"),
+    totals_csv: OutPath = OutPath("data/region_totals.csv"),
 ) -> None:
     """Combine the product and order data into a per-region revenue report."""
     prices: dict[str, float] = {}
@@ -90,8 +90,8 @@ def build_region_totals(
 
 @rule()
 def export_totals_graph(
-    totals_csv: InFile = InFile("data/region_totals.csv"),
-    graph_ttl: OutFile = OutFile("data/region_totals.ttl"),
+    totals_csv: InPath = InPath("data/region_totals.csv"),
+    graph_ttl: OutPath = OutPath("data/region_totals.ttl"),
 ) -> Graph:
     """Convert the per-region totals into an RDF graph and serialize it."""
     graph = Graph()
@@ -128,20 +128,20 @@ def export_totals_graph(
 
 @rule()
 def build_sales_report(
-    products_csv: OutFile = OutFile("data/products.csv"),
-    orders_csv: OutFile = OutFile("data/orders.csv"),
-    totals_csv: OutFile = OutFile("data/region_totals.csv"),
-    graph_ttl: OutFile = OutFile("data/region_totals.ttl"),
+    products_csv: OutPath = OutPath("data/products.csv"),
+    orders_csv: OutPath = OutPath("data/orders.csv"),
+    totals_csv: OutPath = OutPath("data/region_totals.csv"),
+    graph_ttl: OutPath = OutPath("data/region_totals.ttl"),
 ) -> Graph:
     """Run the entire workflow and return the final RDF graph."""
     create_seed_data(products_csv=products_csv, orders_csv=orders_csv)
     build_region_totals(
-        products_csv=products_csv.as_infile(),
-        orders_csv=orders_csv.as_infile(),
+        products_csv=products_csv.as_inpath(),
+        orders_csv=orders_csv.as_inpath(),
         totals_csv=totals_csv,
     )
-    return export_totals_graph(totals_csv=totals_csv.as_infile(), graph_ttl=graph_ttl)
+    return export_totals_graph(totals_csv=totals_csv.as_inpath(), graph_ttl=graph_ttl)
 
 
 if __name__ == "__main__":
-    main(COMMANDS, GLOBAL_CONFIG)
+    main()

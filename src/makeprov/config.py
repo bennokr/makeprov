@@ -1,9 +1,27 @@
-from dataclasses import fields, is_dataclass
+from __future__ import annotations
+from dataclasses import dataclass, fields, is_dataclass
+from typing import Literal
 import sys, logging, tomllib as toml, defopt
 import argparse
 
+ProvFormat = Literal["json", "trig"]
 
-def main(subcommands, conf_obj, parsers=None):
+@dataclass
+class ProvenanceConfig:
+    base_iri: str = "http://example.org/"
+    prov_dir: str = "prov"
+    force: bool = False
+    dry_run: bool = False
+    out_fmt: ProvFormat = "json"
+
+GLOBAL_CONFIG = ProvenanceConfig()
+
+def main(subcommands=None, conf_obj=None, parsers=None):
+    from .core import COMMANDS
+    
+    subcommands = subcommands or COMMANDS
+    conf_obj = conf_obj or GLOBAL_CONFIG
+
     def conf(dc, params):
         for f in fields(dc):
             if f.name in params:
