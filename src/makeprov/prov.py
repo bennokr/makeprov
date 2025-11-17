@@ -303,6 +303,8 @@ class Prov:
         )
         if fmt == "json":
             data = doc.to_jsonld(with_context=jsonld_with_context)
+            if result is not None and isinstance(result, JSONLDMixin):
+                data["result"] = result.to_jsonld(with_context=jsonld_with_context)
             final = out.with_suffix(".json")
             logging.info("Writing JSON-LD provenance %s", final)
             final.write_text(json.dumps(data, indent=2), encoding="utf-8")
