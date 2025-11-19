@@ -110,18 +110,9 @@ def rule(
     Decorator that infers inputs/outputs from type annotations
     (InPath / OutPath, including Optional[...] unions) and writes provenance.
     """
-    base_config = config or GLOBAL_CONFIG
-    rule_config = ProvenanceConfig(
-        base_iri=base_iri if base_iri is not None else base_config.base_iri,
-        prov_dir=prov_dir if prov_dir is not None else base_config.prov_dir,
-        prov_path=base_config.prov_path,
-        force=force if force is not None else base_config.force,
-        dry_run=dry_run if dry_run is not None else base_config.dry_run,
-        out_fmt=out_fmt if out_fmt is not None else base_config.out_fmt,
-        jsonld_with_context=base_config.jsonld_with_context,
-    )
 
     def decorator(func):
+
         sig = inspect.signature(func)
         hints = get_type_hints(func)
 
@@ -167,6 +158,18 @@ def rule(
         def wrapped(*args, **kwargs):
             bound = sig.bind_partial(*args, **kwargs)
             bound.apply_defaults()
+
+            global GLOBAL_CONFIG
+            base_config = config or GLOBAL_CONFIG
+            rule_config = ProvenanceConfig(
+                base_iri=base_iri if base_iri is not None else base_config.base_iri,
+                prov_dir=prov_dir if prov_dir is not None else base_config.prov_dir,
+                prov_path=base_config.prov_path,
+                force=force if force is not None else base_config.force,
+                dry_run=dry_run if dry_run is not None else base_config.dry_run,
+                out_fmt=out_fmt if out_fmt is not None else base_config.out_fmt,
+                jsonld_with_context=base_config.jsonld_with_context,
+            )
 
             effective_jsonld_with_context = (
                 jsonld_with_context

@@ -20,7 +20,8 @@ GLOBAL_CONFIG = ProvenanceConfig()
 
 def main(subcommands=None, conf_obj=None, parsers=None):
     from .core import COMMANDS, flush_prov_buffer, start_prov_buffer
-    
+    global GLOBAL_CONFIG
+
     subcommands = subcommands or COMMANDS
     conf_obj = conf_obj or GLOBAL_CONFIG
 
@@ -64,7 +65,7 @@ def main(subcommands=None, conf_obj=None, parsers=None):
     )
 
     ns = apply_globals(sys.argv[1:])  # apply effects early
-    logging.debug(f"Config: {conf_obj}")
+    logging.debug(f"Config: {GLOBAL_CONFIG}")
     try:
         if ns.merge_prov:
             start_prov_buffer()
