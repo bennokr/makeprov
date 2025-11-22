@@ -25,11 +25,52 @@ PROV_BUFFER: list[Prov] | None = None
 
 
 def start_prov_buffer() -> None:
+    """Create a provenance buffer to batch writes.
+
+    This function is typically invoked at the start of a command-line session
+    (see :func:`makeprov.config.main`) to accumulate ``Prov`` objects produced
+    by multiple rule executions. Buffered provenance is merged and flushed with
+    :func:`flush_prov_buffer`.
+
+    Examples:
+        Start buffering provenance records before running several rules:
+
+        ```python
+        from makeprov.core import start_prov_buffer, flush_prov_buffer
+
+        start_prov_buffer()
+        try:
+            rule_a()
+            rule_b()
+        finally:
+            flush_prov_buffer()
+        ```
+    """
+
     global PROV_BUFFER
     PROV_BUFFER = []
 
 
 def flush_prov_buffer() -> None:
+    """Write and clear any buffered provenance records.
+
+    If :func:`start_prov_buffer` has been called and the buffer contains
+    ``Prov`` objects, they are merged into a single document and written using
+    the global configuration. The buffer is cleared regardless of write
+    success, so callers should wrap their work in a ``try/finally`` block.
+
+    Examples:
+        Flush the buffer after running a series of build steps:
+
+        ```python
+        from makeprov.core import flush_prov_buffer, start_prov_buffer
+
+        start_prov_buffer()
+        # ... run decorated rules ...
+        flush_prov_buffer()
+        ```
+    """
+
     global PROV_BUFFER
     try:
         if PROV_BUFFER:
@@ -45,7 +86,26 @@ def flush_prov_buffer() -> None:
 
 
 def needs_update(outputs, deps) -> bool:
-    """Return True if any output missing or older than any dependency."""
+    """Determine whether outputs are stale relative to dependencies.
+
+    Args:
+        outputs (Iterable[str | Path]): Output files expected to exist after a
+            rule runs.
+        deps (Iterable[str | Path]): Dependency files that must be newer than
+            outputs for a rebuild to be unnecessary.
+
+    Returns:
+        bool: ``True`` if any output is missing or older than a dependency; the
+        absence of dependencies returns ``False`` to avoid unnecessary rebuilds.
+
+    Examples:
+        ```python
+        from makeprov.core import needs_update
+
+        if needs_update(["data/output.txt"], ["data/input.txt"]):
+            regenerate()
+        ```
+    """
     out_paths = [Path(o) for o in outputs]
     dep_paths = [Path(d) for d in deps]
 
@@ -63,6 +123,27 @@ def needs_update(outputs, deps) -> bool:
 
 
 def _is_kind_annotation(ann: Any, cls: type) -> bool:
+    """Check whether a type annotation represents a specific path marker.
+
+    Args:
+        ann (Any): The annotation retrieved from a function parameter.
+        cls (type): The marker class to detect, such as :class:`InPath` or
+            :class:`OutPath`.
+
+    Returns:
+        bool: ``True`` if the annotation directly references ``cls`` or a
+        union/optional type containing it.
+
+    Examples:
+        ```python
+        from typing import Optional
+        from makeprov.core import _is_kind_annotation
+        from makeprov.paths import InPath
+
+        _is_kind_annotation(Optional[InPath], InPath)  # True
+        ```
+    """
+
     if ann is cls:
         return True
     origin = get_origin(ann)
@@ -83,9 +164,44 @@ def rule(
     config: ProvenanceConfig | None = None,
     context: bool | None = None,
 ):
-    """
-    Decorator that infers inputs/outputs from type annotations
-    (InPath / OutPath, including Optional[...] unions) and writes provenance.
+    """Decorate a function as a build rule with automatic provenance.
+
+    Args:
+        name (str | None): Logical name for the rule; defaults to the function
+            name.
+        base_iri (str | None): Base IRI for provenance identifiers; overrides
+            global configuration when provided.
+        prov_dir (str | None): Directory where provenance documents are saved.
+        prov_path (str | None): Explicit path for the provenance file; overrides
+            ``prov_dir`` when set.
+        force (bool | None): When ``True``, always run the rule regardless of
+            timestamps.
+        dry_run (bool | None): When ``True``, log activity without executing the
+            wrapped function.
+        out_fmt (ProvFormat | None): Output format for provenance files
+            (``"json"`` or ``"trig"``).
+        config (ProvenanceConfig | None): Configuration object to use instead of
+            :data:`makeprov.config.GLOBAL_CONFIG`.
+        context (bool | None): Whether to embed JSON-LD context in output when
+            writing provenance.
+
+    Returns:
+        Callable: A decorator that wraps the target function and registers it as
+        a rule when outputs are discoverable from annotations.
+
+    Examples:
+        Annotate parameters with :class:`InPath` and :class:`OutPath` to let the
+        decorator infer dependencies:
+
+        ```python
+        from makeprov import InPath, OutPath, rule
+
+        @rule()
+        def uppercase(src: InPath, dst: OutPath):
+            dst.write_text(src.read_text().upper())
+
+        uppercase("data/input.txt", "data/output.txt")
+        ```
     """
 
     def decorator(func):
@@ -256,9 +372,25 @@ def rule(
 
 @rule()
 def build(target: OutPath, _seen=None):
-    """
-    Recursively build target after its dependencies, if needed.
-    `target` is a path (string/Path). Only rules with default OutPath are in DAG.
+    """Recursively build a target after its dependencies when stale.
+
+    Args:
+        target (OutPath): Path to the output to build. The path must correspond
+            to a rule that was registered via :func:`rule`.
+        _seen (set[str] | None): Internal set to detect graph cycles; callers
+            typically omit this argument.
+
+    Returns:
+        None: The function executes registered rule callbacks for dependencies
+        and the target in topological order.
+
+    Examples:
+        ```python
+        from makeprov import build
+
+        # Build a specific target created by a decorated rule
+        build("data/output.txt")
+        ```
     """
     top_level = _seen is None
     if _seen is None:
@@ -283,6 +415,23 @@ def build(target: OutPath, _seen=None):
 
 @rule()
 def build_all(_: OutPath = None):
+    """Build all registered targets that have no dependents.
+
+    Args:
+        _ (OutPath | None): Placeholder parameter required for the rule
+            decorator. It is ignored at runtime.
+
+    Returns:
+        None: Executes each rule whose output is not consumed by another rule.
+
+    Examples:
+        ```python
+        from makeprov import build_all
+
+        # Build every terminal target in the dependency graph
+        build_all()
+        ```
+    """
     global RULES
 
     all_deps, all_outputs = set(), set()

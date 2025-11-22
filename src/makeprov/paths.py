@@ -9,9 +9,18 @@ _BasePath = type(Path())
 
 
 class ProvPath(_BasePath):
-    """
-    A Path subclass that understands '-' as a special stream path.
-    For subclasses InPath and OutPath, '-' maps to stdin/stdout, respectively.
+    """Filesystem path with first-class support for stream placeholders.
+
+    Hyphen (``"-"``) paths are treated as stdin/stdout streams but still behave
+    like :class:`pathlib.Path` instances for all other operations.
+
+    Examples:
+        ```python
+        from makeprov.paths import ProvPath
+
+        p = ProvPath("-")
+        assert p.is_stream
+        ```
     """
 
     def __new__(cls, *paths: str | bytes | "ProvPath"):
@@ -31,9 +40,24 @@ class ProvPath(_BasePath):
         return getattr(self, "_stream_name", None)
 
     def open(self, mode: str = "r", *args, **kwargs):
-        """
-        Default behavior: respects '-' as stdin for read modes and stdout for write modes.
-        Subclasses override to enforce direction.
+        """Open the path while respecting stream semantics.
+
+        Args:
+            mode (str): File open mode, passed through to ``Path.open`` when not
+                operating on a stream.
+            *args: Additional positional arguments forwarded to ``Path.open``.
+            **kwargs: Additional keyword arguments forwarded to ``Path.open``.
+
+        Returns:
+            IOBase: A file-like object for the requested mode.
+
+        Examples:
+            ```python
+            from makeprov.paths import ProvPath
+
+            with ProvPath("output.txt").open("w") as handle:
+                handle.write("hello")
+            ```
         """
         if self.is_stream:
             if any(x in mode for x in ("w", "a", "+")):
@@ -49,7 +73,17 @@ class ProvPath(_BasePath):
 
 
 class InPath(ProvPath):
-    """Marker for input paths. '-' means stdin."""
+    """Marker for input paths where ``"-"`` maps to stdin.
+
+    Examples:
+        ```python
+        from makeprov.paths import InPath
+
+        src = InPath("data/input.txt")
+        with src.open() as handle:
+            _ = handle.read()
+        ```
+    """
 
     def __new__(cls, *paths: str | bytes | ProvPath):
         self = super().__new__(cls, *paths)
@@ -58,13 +92,37 @@ class InPath(ProvPath):
         return self
 
     def open(self, mode: str = "r", *args, **kwargs):
+        """Open the path for reading, honoring stdin streams.
+
+        Args:
+            mode (str): File mode; defaults to read.
+            *args: Additional positional arguments forwarded to ``Path.open``.
+            **kwargs: Additional keyword arguments forwarded to ``Path.open``.
+
+        Returns:
+            IOBase: Readable file-like object.
+
+        Examples:
+            ```python
+            InPath("example.txt").open().read()
+            ```
+        """
         if self.is_stream:
             return sys.stdin.buffer if "b" in mode else sys.stdin
         return super().open(mode, *args, **kwargs)
 
 
 class OutPath(ProvPath):
-    """Marker for output paths. '-' means stdout."""
+    """Marker for output paths where ``"-"`` maps to stdout.
+
+    Examples:
+        ```python
+        from makeprov.paths import OutPath
+
+        dest = OutPath("data/output.txt")
+        dest.write_text("generated")
+        ```
+    """
 
     def __new__(cls, *paths: str | bytes | ProvPath):
         self = super().__new__(cls, *paths)
@@ -73,12 +131,42 @@ class OutPath(ProvPath):
         return self
 
     def as_inpath(self) -> InPath:
-        """Convert an OutPath to an InPath (disallowed for streams)."""
+        """Convert an output marker into an input marker.
+
+        Returns:
+            InPath: A new instance pointing to the same filesystem location.
+
+        Raises:
+            ValueError: If the current path represents a stream.
+
+        Examples:
+            ```python
+            from makeprov.paths import OutPath
+
+            OutPath("data/output.txt").as_inpath()
+            ```
+        """
         if self.is_stream:
             raise ValueError("Cannot convert stream-based OutPath '-' into InPath")
         return InPath(str(self))
 
     def open(self, mode: str = "w", *args, **kwargs):
+        """Open the path for writing, creating parent directories when needed.
+
+        Args:
+            mode (str): File mode; defaults to write.
+            *args: Additional positional arguments forwarded to ``Path.open``.
+            **kwargs: Additional keyword arguments forwarded to ``Path.open``.
+
+        Returns:
+            IOBase: Writable file-like object.
+
+        Examples:
+            ```python
+            with OutPath("output.txt").open("w") as handle:
+                handle.write("hello")
+            ```
+        """
         if self.is_stream:
             return sys.stdout.buffer if "b" in mode else sys.stdout
         # Ensure directories exist for output

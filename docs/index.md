@@ -7,5 +7,8 @@
 :caption: Contents
 
 Home <self>
+usage
+configuration
+provenance
 api
 ```

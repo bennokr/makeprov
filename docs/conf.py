@@ -16,6 +16,7 @@ extensions = [
     "sphinx.ext.autodoc",   # pull in docstrings
     "sphinx.ext.autosummary",  # generate API pages
     "sphinx.ext.napoleon", # docstrings
+    "sphinx_autodoc_typehints",
     "sphinx.ext.githubpages",
 ]
 

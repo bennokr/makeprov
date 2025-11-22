@@ -22,6 +22,13 @@ dev = [
     "rdflib>=6.0",
     "pyshacl>=0.20"
 ]
+docs = [
+    "sphinx>=7",
+    "myst-parser[linkify]",
+    "sphinx-rtd-theme",
+    "sphinx-autodoc-typehints",
+    "tomli; python_version<'3.11'",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/bennokr/makeprov"

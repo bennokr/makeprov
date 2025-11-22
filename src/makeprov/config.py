@@ -9,6 +9,28 @@ ProvFormat = Literal["json", "trig"]
 
 @dataclass
 class ProvenanceConfig:
+    """Runtime configuration for provenance generation.
+
+    Args:
+        base_iri: Default base IRI used when constructing provenance identifiers.
+        prov_dir: Directory where provenance documents are written by default.
+        prov_path: Explicit provenance output path that overrides ``prov_dir``.
+        force: When ``True``, rebuild rules regardless of input/output freshness.
+        merge: When ``True``, provenance from multiple rules is buffered and
+            merged into a single document.
+        dry_run: When ``True``, log rule execution without running the wrapped
+            function.
+        out_fmt: Output format for provenance files (``"json"`` or ``"trig"``).
+        context: Whether JSON-LD outputs include the context inline.
+
+    Examples:
+        ```python
+        from makeprov import ProvenanceConfig, GLOBAL_CONFIG
+
+        GLOBAL_CONFIG = ProvenanceConfig(prov_dir="artifacts/prov", out_fmt="trig")
+        ```
+    """
+
     base_iri: str | None = None
     prov_dir: str = "prov"
     prov_path: str | None = None
@@ -23,6 +45,28 @@ GLOBAL_CONFIG = ProvenanceConfig()
 
 
 def apply_config(conf_obj, toml_ref):
+    """Update a dataclass configuration from TOML content.
+
+    Args:
+        conf_obj (dataclass): Configuration object to mutate in place.
+        toml_ref (str): Either a TOML string or an ``@``-prefixed path to a
+            TOML file.
+
+    Raises:
+        FileNotFoundError: If ``toml_ref`` points to a missing file.
+        tomllib.TOMLDecodeError: If TOML content cannot be parsed.
+
+    Examples:
+        Load configuration overrides from a file and apply them to the global
+        settings:
+
+        ```python
+        from makeprov.config import GLOBAL_CONFIG, apply_config
+
+        apply_config(GLOBAL_CONFIG, "@config/provenance.toml")
+        ```
+    """
+
     def set_conf(dc, params):
         for f in fields(dc):
             if f.name in params:
@@ -40,6 +84,24 @@ def apply_config(conf_obj, toml_ref):
 
 
 def main(subcommands=None, conf_obj=None, parsers=None):
+    """Entry point for running registered CLI subcommands.
+
+    Args:
+        subcommands (Iterable[Callable] | None): Functions decorated with
+            :func:`makeprov.core.rule` to expose on the command line; defaults to
+            registered commands.
+        conf_obj (ProvenanceConfig | None): Configuration to update from command
+            line flags; defaults to :data:`GLOBAL_CONFIG`.
+        parsers (dict | None): Optional custom defopt parsers.
+
+    Examples:
+        Expose decorated rules as CLI commands and honor configuration flags:
+
+        ```bash
+        python -m makeprov --conf @config/provenance.toml --verbose my_rule arg1
+        ```
+    """
+
     from .core import COMMANDS, flush_prov_buffer, start_prov_buffer
 
     global GLOBAL_CONFIG

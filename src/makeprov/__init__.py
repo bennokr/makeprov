@@ -1,3 +1,4 @@
+"""Track file provenance in Python workflows using PROV semantics"""
 from __future__ import annotations
 
 from .config import ProvenanceConfig, GLOBAL_CONFIG, main

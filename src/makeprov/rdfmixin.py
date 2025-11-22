@@ -7,15 +7,58 @@ import logging
 
 
 class RDFMixin:
-    """Easy JSON-LD dataclass trick with roundtripping of unknown fields."""
+    """Provide JSON-LD serialization helpers for dataclasses.
+
+    The mixin preserves unknown fields when round-tripping JSON-LD documents and
+    offers convenient conversion to rdflib graphs.
+
+    Examples:
+        ```python
+        @dataclass
+        class Person(RDFMixin):
+            id: str
+            type: str = "ex:Person"
+            name: str | None = None
+
+        person = Person(id="ex:alice", name="Alice")
+        jsonld = person.to_jsonld()
+        ```
+    """
 
     def __post_init__(self):
+        """Initialize storage for unknown fields and context aliases.
+
+        Examples:
+            ```python
+            from dataclasses import dataclass
+
+            @dataclass
+            class Thing(RDFMixin):
+                id: str
+
+            thing = Thing(id="ex:item")
+            thing.__post_init__()
+            ```
+        """
         # storage for unknown/non-dataclass keys from the source JSON-LD
         if not hasattr(self, "_extra"):
             self._extra = {}
         self._build_aliases()
 
     def _build_aliases(self):
+        """Construct a lookup of JSON-LD terms to dataclass field names.
+
+        Examples:
+            ```python
+            from dataclasses import dataclass
+
+            @dataclass
+            class Thing(RDFMixin):
+                id: str
+
+            Thing(id="ex:item")._build_aliases()
+            ```
+        """
         self.__alias = {f.name: f.name for f in fields(self)}
         ctx = getattr(self, "__context__", {})
         if not isinstance(ctx, dict):
@@ -44,6 +87,19 @@ class RDFMixin:
 
     @classmethod
     def fields_subclass_first(cls):
+        """Return dataclass fields with subclass members ordered first.
+
+        Examples:
+            ```python
+            from dataclasses import dataclass
+
+            @dataclass
+            class Thing(RDFMixin):
+                id: str
+
+            Thing.fields_subclass_first()
+            ```
+        """
         if not is_dataclass(cls):
             raise TypeError(f"{cls.__name__} is not a dataclass")
         fby = {f.name: f for f in fields(cls)}
@@ -63,7 +119,13 @@ class RDFMixin:
 
     @classmethod
     def _encode_literal(cls, v):
-        """Convert Python literals into JSON-serializable values."""
+        """Convert Python literals into JSON-serializable values.
+
+        Examples:
+            ```python
+            RDFMixin._encode_literal(datetime.utcnow())
+            ```
+        """
         if isinstance(v, (datetime, date, time)):
             # ISO 8601 string; @context/@type can mark it as xsd:dateTime/xsd:date/xsd:time
             return v.isoformat()
@@ -79,9 +141,20 @@ class RDFMixin:
 
     @classmethod
     def _decode_literal(cls, value, ftype, *, field_name=None):
-        """
-        Convert JSON scalar back to the desired Python type using the type hint.
-        Subclasses can override to extend/modify behavior.
+        """Convert JSON scalars back to Python values using type hints.
+
+        Args:
+            value: Raw value from JSON-LD input.
+            ftype: Target Python type derived from annotations.
+            field_name: Name of the field being decoded, used for debugging.
+
+        Returns:
+            Any: Decoded Python object.
+
+        Examples:
+            ```python
+            RDFMixin._decode_literal("2023-01-01", date)
+            ```
         """
         if value is None:
             return None
@@ -111,6 +184,22 @@ class RDFMixin:
         return value
 
     def to_jsonld(self, with_context=True, include_extra=True):
+        """Serialize the object to a JSON-LD-compatible mapping.
+
+        Args:
+            with_context (bool): Whether to include the ``@context`` section.
+            include_extra (bool): Whether to emit unknown fields captured during
+                deserialization.
+
+        Returns:
+            dict: JSON-LD representation of the object.
+
+        Examples:
+            ```python
+            person = Person(id="ex:alice", name="Alice")
+            payload = person.to_jsonld()
+            ```
+        """
         def enc(v):
             if isinstance(v, RDFMixin):
                 return v.to_jsonld(with_context=False)
@@ -139,6 +228,19 @@ class RDFMixin:
 
     @classmethod
     def from_jsonld(cls, data: dict):
+        """Deserialize a JSON-LD mapping into the dataclass instance.
+
+        Args:
+            data (dict): Parsed JSON-LD object including optional ``@context``.
+
+        Returns:
+            RDFMixin: An instance of ``cls`` populated from ``data``.
+
+        Examples:
+            ```python
+            person = Person.from_jsonld({"id": "ex:alice", "name": "Alice"})
+            ```
+        """
         hints = get_type_hints(cls)
 
         def dec(value, ftype, *, field_name=None):
@@ -214,8 +316,18 @@ class RDFMixin:
         return obj
 
     def to_graph(self):
-        """
-        Convert this object to an rdflib.Graph using its JSON-LD representation.
+        """Convert this object to an :class:`rdflib.Graph` from JSON-LD.
+
+        Returns:
+            rdflib.Graph: Graph containing triples representing the instance.
+
+        Raises:
+            RuntimeError: If :mod:`rdflib` is not installed.
+
+        Examples:
+            ```python
+            graph = Person(id="ex:alice").to_graph()
+            ```
         """
         try:
             from rdflib import Graph, Namespace

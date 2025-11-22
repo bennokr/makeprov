@@ -114,6 +114,20 @@ class ProvDoc(RDFMixin):
 
 
 def _safe_cmd(argv: list[str]) -> str | None:
+    """Execute a command safely, returning stdout or ``None`` on failure.
+
+    Args:
+        argv (list[str]): Command and arguments to execute.
+
+    Returns:
+        str | None: Trimmed stdout from the command, or ``None`` if the command
+        fails.
+
+    Examples:
+        ```python
+        commit = _safe_cmd(["git", "rev-parse", "HEAD"])
+        ```
+    """
     try:
         return subprocess.run(
             argv, check=True, capture_output=True, text=True
@@ -123,6 +137,16 @@ def _safe_cmd(argv: list[str]) -> str | None:
 
 
 def _caller_script() -> Path:
+    """Infer the calling script path for provenance metadata.
+
+    Returns:
+        Path: Best-effort absolute path to the executing script or ``unknown``.
+
+    Examples:
+        ```python
+        script_path = _caller_script()
+        ```
+    """
     import sys, inspect
 
     mod = sys.modules.get("__main__")
@@ -143,6 +167,22 @@ def _caller_script() -> Path:
 
 
 def project_metadata(dist_name: str | None = None):
+    """Extract package metadata for provenance enrichment.
+
+    Args:
+        dist_name (str | None): Distribution name; when ``None`` the caller's
+            package name is inferred from the module context.
+
+    Returns:
+        tuple[str | None, str | None, list[str]]: Distribution name, version,
+        and dependency specifications. Empty values are returned when metadata
+        cannot be found.
+
+    Examples:
+        ```python
+        name, version, requires = project_metadata("makeprov")
+        ```
+    """
     import inspect
     import importlib.metadata as im
 
@@ -166,10 +206,33 @@ def project_metadata(dist_name: str | None = None):
 
 
 def pep503_normalize(name: str) -> str:
+    """Normalize a package name according to PEP 503 rules.
+
+    Args:
+        name (str): The distribution name to normalize.
+
+    Returns:
+        str: Lowercase, normalized package name with punctuation collapsed.
+    """
+
     return re.sub(r"[-_.]+", "-", name.strip().lower())
 
 
 def _path_info(path: Path) -> dict[str, Any]:
+    """Collect file metadata for provenance entries.
+
+    Args:
+        path (Path): File path to inspect.
+
+    Returns:
+        dict[str, Any]: Mapping containing format, size, modification time, and
+        optional SHA-256 hash when available.
+
+    Examples:
+        ```python
+        details = _path_info(Path("data/output.txt"))
+        ```
+    """
     existed = path.exists()
     info: dict[str, Any] = {
         "format": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
@@ -189,6 +252,14 @@ def _path_info(path: Path) -> dict[str, Any]:
 
 
 def _base(iri: str) -> str:
+    """Ensure an IRI ends with a delimiter suitable for concatenation.
+
+    Examples:
+        ```python
+        _base("https://example.com/api")  # "https://example.com/api/"
+        ```
+    """
+
     return iri if iri.endswith(("/", "#")) else iri + "/"
 
 
@@ -213,6 +284,37 @@ class Prov:
         results: list[RDFMixin],
         success: bool = True,
     ):
+        """Assemble a provenance graph from rule execution details.
+
+        Args:
+            base_iri (str | None): Base IRI for generated identifiers.
+            name (str): Logical rule name.
+            run_id (str): Unique identifier for this run, typically timestamp-based.
+            t0 (datetime): Start time of the rule execution.
+            t1 (datetime): End time of the rule execution.
+            inputs (list[Path]): Input files consumed by the rule.
+            outputs (list[Path]): Output files produced by the rule.
+            results (list[RDFMixin]): Optional result graphs to embed alongside
+                provenance records.
+            success (bool): Whether the rule completed successfully.
+
+        Returns:
+            Prov: A populated :class:`Prov` instance ready for serialization.
+
+        Examples:
+            ```python
+            prov = Prov.create(
+                base_iri=None,
+                name="uppercase",
+                run_id="20240101T120000",
+                t0=start,
+                t1=end,
+                inputs=[Path("input.txt")],
+                outputs=[Path("output.txt")],
+                results=[],
+            )
+            ```
+        """
         def _iri(tail: str) -> str:
             return f"{_base(base_iri)}{tail}"
 
@@ -354,6 +456,20 @@ class Prov:
 
     @classmethod
     def merge(cls, provs: list["Prov"]) -> "Prov":
+        """Combine multiple provenance documents into one.
+
+        Args:
+            provs (list[Prov]): Provenance objects to merge.
+
+        Returns:
+            Prov: A new object containing combined provenance and results from
+            all inputs.
+
+        Examples:
+            ```python
+            merged = Prov.merge([prov_a, prov_b])
+            ```
+        """
         base_iri, name, all_provenance, all_results = None, None, [], []
         for prov in provs:
             base_iri = prov.base_iri
@@ -363,6 +479,27 @@ class Prov:
         return cls(base_iri, name, all_provenance, all_results)
 
     def write(self, prov_path: str | Path, fmt="json", context=False) -> Path:
+        """Serialize provenance to disk.
+
+        Args:
+            prov_path (str | Path): Output path (without extension) where the
+                provenance document should be written.
+            fmt (str): Output format, ``"json"`` for JSON-LD or ``"trig"`` for
+                RDF TriG.
+            context (bool): Whether to include the JSON-LD context inline when
+                writing JSON.
+
+        Returns:
+            Path: The path to the written provenance document with extension.
+
+        Raises:
+            Exception: If the requested format is unsupported.
+
+        Examples:
+            ```python
+            output = prov.write("prov/uppercase", fmt="json", context=True)
+            ```
+        """
         out = Path(prov_path)
         out.parent.mkdir(parents=True, exist_ok=True)
 
