@@ -8,9 +8,10 @@ from rdflib.namespace import RDF, XSD
 
 from makeprov import InPath, OutPath, ProvenanceConfig, build, main, rule
 
+
 @rule(name="test_process_data")
 def process_data(input_file: InPath, output_file: OutPath):
-    with input_file.open('r') as infile, output_file.open('w') as outfile:
+    with input_file.open("r") as infile, output_file.open("w") as outfile:
         data = infile.read()
         outfile.write(data)
 
@@ -25,18 +26,21 @@ def totals_graph(input_csv: InPath, graph_out: OutPath) -> Graph:
     graph = Graph()
     graph.bind("sales", SALES_NS)
 
-
-    with input_csv.open('r') as handle:
+    with input_csv.open("r") as handle:
         for line in handle.read().strip().splitlines()[1:]:
-            region, units, revenue = line.split(',')
+            region, units, revenue = line.split(",")
             subject = SALES_NS[f"region/{region.lower()}"]
             graph.add((subject, RDF.type, SALES_NS.RegionTotal))
             graph.add((subject, SALES_NS.regionName, Literal(region)))
-            graph.add((subject, SALES_NS.totalUnits, Literal(units, datatype=XSD.integer)))
-            graph.add((subject, SALES_NS.totalRevenue, Literal(revenue, datatype=XSD.decimal)))
+            graph.add(
+                (subject, SALES_NS.totalUnits, Literal(units, datatype=XSD.integer))
+            )
+            graph.add(
+                (subject, SALES_NS.totalRevenue, Literal(revenue, datatype=XSD.decimal))
+            )
 
-    with graph_out.open('w') as handle:
-        handle.write(graph.serialize(format='turtle'))
+    with graph_out.open("w") as handle:
+        handle.write(graph.serialize(format="turtle"))
 
     return graph
 
@@ -65,8 +69,8 @@ def test_rule_returns_graph(tmp_path):
     assert isinstance(result, Graph)
     assert graph_ttl.exists()
     assert "North" in graph_ttl.read_text()
-    print(*TEST_PROV_DIR.glob('*'))
-    assert list(TEST_PROV_DIR.glob('*'))
+    print(*TEST_PROV_DIR.glob("*"))
+    assert list(TEST_PROV_DIR.glob("*"))
 
 
 def test_build_combines_provenance(tmp_path, monkeypatch):
@@ -136,7 +140,7 @@ def test_cli_merge_prov(tmp_path, monkeypatch):
         step_two()
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["prog", "--merge-prov", "run-pipeline"])
+    monkeypatch.setattr(sys, "argv", ["prog", "-c", "merge=true", "run-pipeline"])
 
     main(subcommands=[run_pipeline])
 

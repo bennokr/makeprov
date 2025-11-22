@@ -6,33 +6,46 @@ import argparse
 
 ProvFormat = Literal["json", "trig"]
 
+
 @dataclass
 class ProvenanceConfig:
-    base_iri: str = "http://example.org/"
+    base_iri: str | None = None
     prov_dir: str = "prov"
     prov_path: str | None = None
     force: bool = False
+    merge: bool = True
     dry_run: bool = False
     out_fmt: ProvFormat = "json"
-    jsonld_with_context: bool = False
+    context: bool = False
+
 
 GLOBAL_CONFIG = ProvenanceConfig()
 
-def main(subcommands=None, conf_obj=None, parsers=None):
-    from .core import COMMANDS, flush_prov_buffer, start_prov_buffer
-    global GLOBAL_CONFIG
 
-    subcommands = subcommands or COMMANDS
-    conf_obj = conf_obj or GLOBAL_CONFIG
-
-    def conf(dc, params):
+def apply_config(conf_obj, toml_ref):
+    def set_conf(dc, params):
         for f in fields(dc):
             if f.name in params:
                 cur, new = getattr(dc, f.name), params[f.name]
                 if is_dataclass(cur) and isinstance(new, dict):
-                    conf(cur, new)
+                    set_conf(cur, new)
                 else:
                     setattr(dc, f.name, new)
+
+    logging.debug(f"Parsing config {toml_ref}")
+    t = toml_ref
+    param = toml.load(open(t[1:], "rb")) if t.startswith("@") else toml.loads(t)
+    logging.debug(f"Setting config {param}")
+    set_conf(conf_obj, param)
+
+
+def main(subcommands=None, conf_obj=None, parsers=None):
+    from .core import COMMANDS, flush_prov_buffer, start_prov_buffer
+
+    global GLOBAL_CONFIG
+
+    subcommands = subcommands or COMMANDS
+    conf_obj = conf_obj or GLOBAL_CONFIG
 
     parent = argparse.ArgumentParser(add_help=False)
     parent.add_argument(
@@ -50,24 +63,14 @@ def main(subcommands=None, conf_obj=None, parsers=None):
         ns, _ = parent.parse_known_args(argv)
         lvl = ("WARNING", "INFO", "DEBUG")[min(max(ns.verbose, 0), 2)]
         logging.basicConfig(level=getattr(logging, lvl))
-        for t in ns.conf:
-            logging.debug(f"Parsing config {t}")
-            p = toml.load(open(t[1:], "rb")) if t.startswith("@") else toml.loads(t)
-            logging.debug(f"Setting config {p}")
-            conf(conf_obj, p)
-
+        for toml_ref in ns.conf:
+            apply_config(conf_obj, toml_ref)
         return ns
 
-    parent.add_argument(
-        "--merge-prov",
-        action="store_true",
-        help="Merge provenance from invoked commands into a single output",
-    )
-
-    ns = apply_globals(sys.argv[1:])  # apply effects early
+    apply_globals(sys.argv[1:])  # apply effects early
     logging.debug(f"Config: {GLOBAL_CONFIG}")
     try:
-        if ns.merge_prov:
+        if GLOBAL_CONFIG.merge:
             start_prov_buffer()
         defopt.run(
             subcommands,
@@ -76,5 +79,5 @@ def main(subcommands=None, conf_obj=None, parsers=None):
             argparse_kwargs={"parents": [parent]},
         )
     finally:
-        if ns.merge_prov:
+        if GLOBAL_CONFIG.merge:
             flush_prov_buffer()

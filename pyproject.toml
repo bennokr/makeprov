@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "makeprov"
-version = "0.2.3"
+version = "0.3.0"
 description = "An provenance tracking library for simple Python workflows"
 readme = "README.md"
 license = { text = "MIT" }

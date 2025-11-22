@@ -126,6 +126,7 @@ def export_totals_graph(
     # provenance dataset.
     return graph
 
+
 @rule()
 def build_sales_report(
     products_csv: OutPath = OutPath("data/products.csv"),

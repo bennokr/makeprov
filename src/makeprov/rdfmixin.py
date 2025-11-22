@@ -6,7 +6,7 @@ from uuid import UUID
 import logging
 
 
-class JSONLDMixin:
+class RDFMixin:
     """Easy JSON-LD dataclass trick with roundtripping of unknown fields."""
 
     def __post_init__(self):
@@ -55,12 +55,12 @@ class JSONLDMixin:
                 if n in fby and n not in seen:
                     seen.add(n)
                     out.append(fby[n])
-        for n in ['type','id']:
+        for n in ["type", "id"]:
             if n in seen:
                 out.remove(fby[n])
                 out.insert(0, fby[n])
         return tuple(out)
-    
+
     @classmethod
     def _encode_literal(cls, v):
         """Convert Python literals into JSON-serializable values."""
@@ -112,7 +112,7 @@ class JSONLDMixin:
 
     def to_jsonld(self, with_context=True, include_extra=True):
         def enc(v):
-            if isinstance(v, JSONLDMixin):
+            if isinstance(v, RDFMixin):
                 return v.to_jsonld(with_context=False)
             if isinstance(v, (list, tuple)):
                 return [enc(x) for x in v]
@@ -137,7 +137,6 @@ class JSONLDMixin:
 
         return doc
 
-
     @classmethod
     def from_jsonld(cls, data: dict):
         hints = get_type_hints(cls)
@@ -158,7 +157,11 @@ class JSONLDMixin:
                 (subtype,) = get_args(ftype)
                 return [dec(v, subtype, field_name=field_name) for v in value]
 
-            if isinstance(value, dict) and is_dataclass(ftype) and issubclass(ftype, JSONLDMixin):
+            if (
+                isinstance(value, dict)
+                and is_dataclass(ftype)
+                and issubclass(ftype, RDFMixin)
+            ):
                 return ftype.from_jsonld(value)
 
             # base scalar case
@@ -176,7 +179,6 @@ class JSONLDMixin:
                 else:
                     kwargs[f.name] = data[f.name]
 
-
         try:
             obj = cls(**kwargs)
         except Exception as e:
@@ -185,9 +187,7 @@ class JSONLDMixin:
 
         # capture extra keys (non-dataclass, non-@context)
         extra = {
-            k: v
-            for k, v in data.items()
-            if k not in field_names and k != "@context"
+            k: v for k, v in data.items() if k not in field_names and k != "@context"
         }
         if not hasattr(obj, "_extra"):
             obj._extra = {}
@@ -212,7 +212,7 @@ class JSONLDMixin:
             obj._build_aliases()
 
         return obj
-    
+
     def to_graph(self):
         """
         Convert this object to an rdflib.Graph using its JSON-LD representation.
@@ -220,7 +220,7 @@ class JSONLDMixin:
         try:
             from rdflib import Graph, Namespace
         except ImportError as exc:
-            raise RuntimeError("rdflib is required for JSONLDMixin.to_graph()") from exc
+            raise RuntimeError("rdflib is required for RDFMixin.to_graph()") from exc
 
         import json
 

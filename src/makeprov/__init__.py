@@ -3,7 +3,7 @@ from __future__ import annotations
 from .config import ProvenanceConfig, GLOBAL_CONFIG, main
 from .paths import ProvPath, InPath, OutPath
 from .core import rule, needs_update, build, COMMANDS
-from .jsonld import JSONLDMixin
+from .rdfmixin import RDFMixin
 
 __all__ = [
     "ProvenanceConfig",
@@ -16,5 +16,5 @@ __all__ = [
     "needs_update",
     "build",
     "COMMANDS",
-    "JSONLDMixin",
+    "RDFMixin",
 ]

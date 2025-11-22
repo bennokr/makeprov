@@ -10,7 +10,8 @@ from collections.abc import Callable
 
 from .config import ProvenanceConfig, ProvFormat, GLOBAL_CONFIG
 from .paths import InPath, OutPath
-from .prov import Prov, ProvResult, write_combined_prov
+from .prov import Prov
+from .rdfmixin import RDFMixin
 
 try:
     import rdflib  # optional
@@ -20,9 +21,7 @@ except Exception:
 # Simple Make-like registry
 RULES: dict[str, dict[str, Any]] = {}
 COMMANDS: set[Callable] = set()
-
-
-PROV_BUFFER: list[ProvResult] | None = None
+PROV_BUFFER: list[Prov] | None = None
 
 
 def start_prov_buffer() -> None:
@@ -34,15 +33,16 @@ def flush_prov_buffer() -> None:
     global PROV_BUFFER
     try:
         if PROV_BUFFER:
-            write_combined_prov(
-                PROV_BUFFER,
-                prov_path=GLOBAL_CONFIG.prov_path or Path(GLOBAL_CONFIG.prov_dir)
-                / "combined",
+            prov = Prov.merge(PROV_BUFFER)
+            prov.write(
+                prov_path=GLOBAL_CONFIG.prov_path
+                or Path(GLOBAL_CONFIG.prov_dir) / prov.name,
                 fmt=GLOBAL_CONFIG.out_fmt,
-                jsonld_with_context=GLOBAL_CONFIG.jsonld_with_context,
+                context=GLOBAL_CONFIG.context,
             )
     finally:
         PROV_BUFFER = None
+
 
 def needs_update(outputs, deps) -> bool:
     """Return True if any output missing or older than any dependency."""
@@ -61,30 +61,6 @@ def needs_update(outputs, deps) -> bool:
     newest_dep = max(dep_times)
     return newest_dep > oldest_out
 
-def build(target, _seen=None):
-    """
-    Recursively build target after its dependencies, if needed.
-    `target` is a path (string/Path). Only rules with default OutPath are in DAG.
-    """
-    top_level = _seen is None
-    if _seen is None:
-        _seen = set()
-    target = str(target)
-    if target in _seen:
-        raise RuntimeError(f"Cycle in build graph at {target!r}")
-    _seen.add(target)
-
-    if top_level:
-        start_prov_buffer()
-
-    rule = RULES[target]
-    for dep in rule["deps"]:
-        if dep in RULES:
-            build(dep, _seen)
-    rule["func"]()
-
-    if top_level:
-        flush_prov_buffer()
 
 def _is_kind_annotation(ann: Any, cls: type) -> bool:
     if ann is cls:
@@ -93,6 +69,7 @@ def _is_kind_annotation(ann: Any, cls: type) -> bool:
     if origin is None:
         return False
     return any(a is cls for a in get_args(ann))
+
 
 def rule(
     *,
@@ -104,7 +81,7 @@ def rule(
     dry_run: bool | None = None,
     out_fmt: ProvFormat | None = None,
     config: ProvenanceConfig | None = None,
-    jsonld_with_context: bool | None = None,
+    context: bool | None = None,
 ):
     """
     Decorator that infers inputs/outputs from type annotations
@@ -112,7 +89,6 @@ def rule(
     """
 
     def decorator(func):
-
         sig = inspect.signature(func)
         hints = get_type_hints(func)
 
@@ -168,14 +144,10 @@ def rule(
                 force=force if force is not None else base_config.force,
                 dry_run=dry_run if dry_run is not None else base_config.dry_run,
                 out_fmt=out_fmt if out_fmt is not None else base_config.out_fmt,
-                jsonld_with_context=base_config.jsonld_with_context,
+                context=base_config.context,
             )
 
-            effective_jsonld_with_context = (
-                jsonld_with_context
-                if jsonld_with_context is not None
-                else rule_config.jsonld_with_context
-            )
+            effective_context = context if context is not None else rule_config.context
 
             in_files: list[Path] = []
             out_files: list[Path] = []
@@ -228,7 +200,16 @@ def rule(
             finally:
                 t1 = datetime.now(timezone.utc)
                 try:
-                    prov = Prov(
+                    if isinstance(result, RDFMixin):
+                        results = [result]
+                    else:
+                        results = []
+                        if isinstance(result, (list, tuple, set)):
+                            for r in result:
+                                if isinstance(r, RDFMixin):
+                                    results.append(r)
+
+                    prov = Prov.create(
                         base_iri=rule_config.base_iri,
                         name=logical_name,
                         run_id=t0.strftime("%Y%m%dT%H%M%S"),
@@ -236,6 +217,7 @@ def rule(
                         t1=t1,
                         inputs=[Path(p) for p in in_files],
                         outputs=[Path(p) for p in out_files],
+                        results=results,
                         success=exc is None,
                     )
                     if prov_path is not None:
@@ -246,16 +228,17 @@ def rule(
                         rule_prov_path = Path(rule_config.prov_dir) / logical_name
 
                     if PROV_BUFFER is not None:
-                        PROV_BUFFER.append(ProvResult(prov, result))
+                        PROV_BUFFER.append(prov)
                     else:
                         prov.write(
                             rule_prov_path,
                             fmt=rule_config.out_fmt,
-                            result=result,
-                            jsonld_with_context=effective_jsonld_with_context,
+                            context=effective_context,
                         )
                 except Exception as prov_exc:  # noqa: BLE001
-                    logging.warning("Failed to write provenance for %s: %s", logical_name, prov_exc)
+                    logging.warning(
+                        "Failed to write provenance for %s: %s", logical_name, prov_exc
+                    )
 
         COMMANDS.add(wrapped)
         if register_for_build:
@@ -269,3 +252,43 @@ def rule(
         return wrapped
 
     return decorator
+
+
+@rule()
+def build(target: OutPath, _seen=None):
+    """
+    Recursively build target after its dependencies, if needed.
+    `target` is a path (string/Path). Only rules with default OutPath are in DAG.
+    """
+    top_level = _seen is None
+    if _seen is None:
+        _seen = set()
+    target = str(target)
+    if target in _seen:
+        raise RuntimeError(f"Cycle in build graph at {target!r}")
+    _seen.add(target)
+
+    if top_level:
+        start_prov_buffer()
+
+    rule = RULES[target]
+    for dep in rule["deps"]:
+        if dep in RULES:
+            build(dep, _seen)
+    rule["func"]()
+
+    if top_level:
+        flush_prov_buffer()
+
+
+@rule()
+def build_all(_: OutPath = None):
+    global RULES
+
+    all_deps, all_outputs = set(), set()
+    for rule in RULES.values():
+        all_deps |= set(rule["deps"])
+        all_outputs |= set(rule["outputs"])
+
+    for target in all_outputs - all_deps:
+        build(target)

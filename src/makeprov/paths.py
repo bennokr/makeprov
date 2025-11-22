@@ -50,6 +50,7 @@ class ProvPath(_BasePath):
 
 class InPath(ProvPath):
     """Marker for input paths. '-' means stdin."""
+
     def __new__(cls, *paths: str | bytes | ProvPath):
         self = super().__new__(cls, *paths)
         if self.is_stream:
@@ -64,6 +65,7 @@ class InPath(ProvPath):
 
 class OutPath(ProvPath):
     """Marker for output paths. '-' means stdout."""
+
     def __new__(cls, *paths: str | bytes | ProvPath):
         self = super().__new__(cls, *paths)
         if self.is_stream:
