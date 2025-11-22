@@ -34,7 +34,7 @@ jobs:
           python -m pip install ".[docs]"
 
       - name: Build docs
-        run: python docs/_build_docs.py
+        run: python docs/build.py
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
