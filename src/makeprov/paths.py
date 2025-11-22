@@ -15,12 +15,12 @@ class ProvPath(_BasePath):
     like :class:`pathlib.Path` instances for all other operations.
 
     Examples:
-        ```python
-        from makeprov.paths import ProvPath
+        .. code-block:: python
 
-        p = ProvPath("-")
-        assert p.is_stream
-        ```
+            from makeprov.paths import ProvPath
+
+            p = ProvPath("-")
+            assert p.is_stream
     """
 
     def __new__(cls, *paths: str | bytes | "ProvPath"):
@@ -52,12 +52,12 @@ class ProvPath(_BasePath):
             IOBase: A file-like object for the requested mode.
 
         Examples:
-            ```python
-            from makeprov.paths import ProvPath
+            .. code-block:: python
 
-            with ProvPath("output.txt").open("w") as handle:
-                handle.write("hello")
-            ```
+                from makeprov.paths import ProvPath
+
+                with ProvPath("output.txt").open("w") as handle:
+                    handle.write("hello")
         """
         if self.is_stream:
             if any(x in mode for x in ("w", "a", "+")):
@@ -76,13 +76,13 @@ class InPath(ProvPath):
     """Marker for input paths where ``"-"`` maps to stdin.
 
     Examples:
-        ```python
-        from makeprov.paths import InPath
+        .. code-block:: python
 
-        src = InPath("data/input.txt")
-        with src.open() as handle:
-            _ = handle.read()
-        ```
+            from makeprov.paths import InPath
+
+            src = InPath("data/input.txt")
+            with src.open() as handle:
+                _ = handle.read()
     """
 
     def __new__(cls, *paths: str | bytes | ProvPath):
@@ -103,9 +103,9 @@ class InPath(ProvPath):
             IOBase: Readable file-like object.
 
         Examples:
-            ```python
-            InPath("example.txt").open().read()
-            ```
+            .. code-block:: python
+
+                InPath("example.txt").open().read()
         """
         if self.is_stream:
             return sys.stdin.buffer if "b" in mode else sys.stdin
@@ -116,12 +116,12 @@ class OutPath(ProvPath):
     """Marker for output paths where ``"-"`` maps to stdout.
 
     Examples:
-        ```python
-        from makeprov.paths import OutPath
+        .. code-block:: python
 
-        dest = OutPath("data/output.txt")
-        dest.write_text("generated")
-        ```
+            from makeprov.paths import OutPath
+
+            dest = OutPath("data/output.txt")
+            dest.write_text("generated")
     """
 
     def __new__(cls, *paths: str | bytes | ProvPath):
@@ -140,11 +140,11 @@ class OutPath(ProvPath):
             ValueError: If the current path represents a stream.
 
         Examples:
-            ```python
-            from makeprov.paths import OutPath
+            .. code-block:: python
 
-            OutPath("data/output.txt").as_inpath()
-            ```
+                from makeprov.paths import OutPath
+
+                OutPath("data/output.txt").as_inpath()
         """
         if self.is_stream:
             raise ValueError("Cannot convert stream-based OutPath '-' into InPath")
@@ -162,10 +162,10 @@ class OutPath(ProvPath):
             IOBase: Writable file-like object.
 
         Examples:
-            ```python
-            with OutPath("output.txt").open("w") as handle:
-                handle.write("hello")
-            ```
+            .. code-block:: python
+
+                with OutPath("output.txt").open("w") as handle:
+                    handle.write("hello")
         """
         if self.is_stream:
             return sys.stdout.buffer if "b" in mode else sys.stdout

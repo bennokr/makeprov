@@ -35,16 +35,16 @@ def start_prov_buffer() -> None:
     Examples:
         Start buffering provenance records before running several rules:
 
-        ```python
-        from makeprov.core import start_prov_buffer, flush_prov_buffer
+        .. code-block:: python
 
-        start_prov_buffer()
-        try:
-            rule_a()
-            rule_b()
-        finally:
-            flush_prov_buffer()
-        ```
+            from makeprov.core import start_prov_buffer, flush_prov_buffer
+
+            start_prov_buffer()
+            try:
+                rule_a()
+                rule_b()
+            finally:
+                flush_prov_buffer()
     """
 
     global PROV_BUFFER
@@ -62,13 +62,13 @@ def flush_prov_buffer() -> None:
     Examples:
         Flush the buffer after running a series of build steps:
 
-        ```python
-        from makeprov.core import flush_prov_buffer, start_prov_buffer
+        .. code-block:: python
 
-        start_prov_buffer()
-        # ... run decorated rules ...
-        flush_prov_buffer()
-        ```
+            from makeprov.core import flush_prov_buffer, start_prov_buffer
+
+            start_prov_buffer()
+            # ... run decorated rules ...
+            flush_prov_buffer()
     """
 
     global PROV_BUFFER
@@ -99,12 +99,12 @@ def needs_update(outputs, deps) -> bool:
         absence of dependencies returns ``False`` to avoid unnecessary rebuilds.
 
     Examples:
-        ```python
-        from makeprov.core import needs_update
+        .. code-block:: python
 
-        if needs_update(["data/output.txt"], ["data/input.txt"]):
-            regenerate()
-        ```
+            from makeprov.core import needs_update
+
+            if needs_update(["data/output.txt"], ["data/input.txt"]):
+                regenerate()
     """
     out_paths = [Path(o) for o in outputs]
     dep_paths = [Path(d) for d in deps]
@@ -135,13 +135,13 @@ def _is_kind_annotation(ann: Any, cls: type) -> bool:
         union/optional type containing it.
 
     Examples:
-        ```python
-        from typing import Optional
-        from makeprov.core import _is_kind_annotation
-        from makeprov.paths import InPath
+        .. code-block:: python
 
-        _is_kind_annotation(Optional[InPath], InPath)  # True
-        ```
+            from typing import Optional
+            from makeprov.core import _is_kind_annotation
+            from makeprov.paths import InPath
+
+            _is_kind_annotation(Optional[InPath], InPath)  # True
     """
 
     if ann is cls:
@@ -193,15 +193,15 @@ def rule(
         Annotate parameters with :class:`InPath` and :class:`OutPath` to let the
         decorator infer dependencies:
 
-        ```python
-        from makeprov import InPath, OutPath, rule
+        .. code-block:: python
 
-        @rule()
-        def uppercase(src: InPath, dst: OutPath):
-            dst.write_text(src.read_text().upper())
+            from makeprov import InPath, OutPath, rule
 
-        uppercase("data/input.txt", "data/output.txt")
-        ```
+            @rule()
+            def uppercase(src: InPath, dst: OutPath):
+                dst.write_text(src.read_text().upper())
+
+            uppercase("data/input.txt", "data/output.txt")
     """
 
     def decorator(func):
@@ -316,41 +316,44 @@ def rule(
             finally:
                 t1 = datetime.now(timezone.utc)
                 try:
-                    if isinstance(result, RDFMixin):
-                        results = [result]
-                    else:
-                        results = []
-                        if isinstance(result, (list, tuple, set)):
-                            for r in result:
-                                if isinstance(r, RDFMixin):
-                                    results.append(r)
+                    should_record = logical_name != "build"
 
-                    prov = Prov.create(
-                        base_iri=rule_config.base_iri,
-                        name=logical_name,
-                        run_id=t0.strftime("%Y%m%dT%H%M%S"),
-                        t0=t0,
-                        t1=t1,
-                        inputs=[Path(p) for p in in_files],
-                        outputs=[Path(p) for p in out_files],
-                        results=results,
-                        success=exc is None,
-                    )
-                    if prov_path is not None:
-                        rule_prov_path = prov_path
-                    elif rule_config.prov_path is not None:
-                        rule_prov_path = rule_config.prov_path
-                    else:
-                        rule_prov_path = Path(rule_config.prov_dir) / logical_name
+                    if should_record:
+                        if isinstance(result, RDFMixin):
+                            results = [result]
+                        else:
+                            results = []
+                            if isinstance(result, (list, tuple, set)):
+                                for r in result:
+                                    if isinstance(r, RDFMixin):
+                                        results.append(r)
 
-                    if PROV_BUFFER is not None:
-                        PROV_BUFFER.append(prov)
-                    else:
-                        prov.write(
-                            rule_prov_path,
-                            fmt=rule_config.out_fmt,
-                            context=effective_context,
+                        prov = Prov.create(
+                            base_iri=rule_config.base_iri,
+                            name=logical_name,
+                            run_id=t0.strftime("%Y%m%dT%H%M%S"),
+                            t0=t0,
+                            t1=t1,
+                            inputs=[Path(p) for p in in_files],
+                            outputs=[Path(p) for p in out_files],
+                            results=results,
+                            success=exc is None,
                         )
+                        if prov_path is not None:
+                            rule_prov_path = prov_path
+                        elif rule_config.prov_path is not None:
+                            rule_prov_path = rule_config.prov_path
+                        else:
+                            rule_prov_path = Path(rule_config.prov_dir) / logical_name
+
+                        if PROV_BUFFER is not None:
+                            PROV_BUFFER.append(prov)
+                        else:
+                            prov.write(
+                                rule_prov_path,
+                                fmt=rule_config.out_fmt,
+                                context=effective_context,
+                            )
                 except Exception as prov_exc:  # noqa: BLE001
                     logging.warning(
                         "Failed to write provenance for %s: %s", logical_name, prov_exc
@@ -385,12 +388,12 @@ def build(target: OutPath, _seen=None):
         and the target in topological order.
 
     Examples:
-        ```python
-        from makeprov import build
+        .. code-block:: python
 
-        # Build a specific target created by a decorated rule
-        build("data/output.txt")
-        ```
+            from makeprov import build
+
+            # Build a specific target created by a decorated rule
+            build("data/output.txt")
     """
     top_level = _seen is None
     if _seen is None:
@@ -425,12 +428,12 @@ def build_all(_: OutPath = None):
         None: Executes each rule whose output is not consumed by another rule.
 
     Examples:
-        ```python
-        from makeprov import build_all
+        .. code-block:: python
 
-        # Build every terminal target in the dependency graph
-        build_all()
-        ```
+            from makeprov import build_all
+
+            # Build every terminal target in the dependency graph
+            build_all()
     """
     global RULES
 
