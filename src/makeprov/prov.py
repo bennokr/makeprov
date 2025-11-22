@@ -124,9 +124,9 @@ def _safe_cmd(argv: list[str]) -> str | None:
         fails.
 
     Examples:
-        ```python
-        commit = _safe_cmd(["git", "rev-parse", "HEAD"])
-        ```
+        .. code-block:: python
+
+            commit = _safe_cmd(["git", "rev-parse", "HEAD"])
     """
     try:
         return subprocess.run(
@@ -143,9 +143,9 @@ def _caller_script() -> Path:
         Path: Best-effort absolute path to the executing script or ``unknown``.
 
     Examples:
-        ```python
-        script_path = _caller_script()
-        ```
+        .. code-block:: python
+
+            script_path = _caller_script()
     """
     import sys, inspect
 
@@ -179,9 +179,9 @@ def project_metadata(dist_name: str | None = None):
         cannot be found.
 
     Examples:
-        ```python
-        name, version, requires = project_metadata("makeprov")
-        ```
+        .. code-block:: python
+
+            name, version, requires = project_metadata("makeprov")
     """
     import inspect
     import importlib.metadata as im
@@ -229,9 +229,9 @@ def _path_info(path: Path) -> dict[str, Any]:
         optional SHA-256 hash when available.
 
     Examples:
-        ```python
-        details = _path_info(Path("data/output.txt"))
-        ```
+        .. code-block:: python
+
+            details = _path_info(Path("data/output.txt"))
     """
     existed = path.exists()
     info: dict[str, Any] = {
@@ -251,15 +251,17 @@ def _path_info(path: Path) -> dict[str, Any]:
     return info
 
 
-def _base(iri: str) -> str:
+def _base(iri: str | None) -> str:
     """Ensure an IRI ends with a delimiter suitable for concatenation.
 
     Examples:
-        ```python
-        _base("https://example.com/api")  # "https://example.com/api/"
-        ```
+        .. code-block:: python
+
+            _base("https://example.com/api")  # "https://example.com/api/"
     """
 
+    if iri is None:
+        return ""
     return iri if iri.endswith(("/", "#")) else iri + "/"
 
 
@@ -302,31 +304,31 @@ class Prov:
             Prov: A populated :class:`Prov` instance ready for serialization.
 
         Examples:
-            ```python
-            prov = Prov.create(
-                base_iri=None,
-                name="uppercase",
-                run_id="20240101T120000",
-                t0=start,
-                t1=end,
-                inputs=[Path("input.txt")],
-                outputs=[Path("output.txt")],
-                results=[],
-            )
-            ```
+            .. code-block:: python
+
+                prov = Prov.create(
+                    base_iri=None,
+                    name="uppercase",
+                    run_id="20240101T120000",
+                    t0=start,
+                    t1=end,
+                    inputs=[Path("input.txt")],
+                    outputs=[Path("output.txt")],
+                    results=[],
+                )
         """
         def _iri(tail: str) -> str:
             return f"{_base(base_iri)}{tail}"
 
-        def _file_iri(path: Path) -> str:
-            return _iri(path.as_posix())
+        def _file_iri(path: Path | str) -> str:
+            return _iri(Path(path).as_posix())
 
         script = _caller_script()
         commit = _safe_cmd(["git", "rev-parse", "HEAD"])
         origin = _safe_cmd(["git", "config", "--get", "remote.origin.url"])
 
         # Default Github URL heuristic
-        if not base_iri and "github.com" in origin:
+        if not base_iri and origin and "github.com" in origin:
             branch = _safe_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"])
             base_iri = origin.replace(".git", "")
 
@@ -466,9 +468,9 @@ class Prov:
             all inputs.
 
         Examples:
-            ```python
-            merged = Prov.merge([prov_a, prov_b])
-            ```
+            .. code-block:: python
+
+                merged = Prov.merge([prov_a, prov_b])
         """
         base_iri, name, all_provenance, all_results = None, None, [], []
         for prov in provs:
@@ -496,9 +498,9 @@ class Prov:
             Exception: If the requested format is unsupported.
 
         Examples:
-            ```python
-            output = prov.write("prov/uppercase", fmt="json", context=True)
-            ```
+            .. code-block:: python
+
+                output = prov.write("prov/uppercase", fmt="json", context=True)
         """
         out = Path(prov_path)
         out.parent.mkdir(parents=True, exist_ok=True)

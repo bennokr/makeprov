@@ -24,11 +24,13 @@ class ProvenanceConfig:
         context: Whether JSON-LD outputs include the context inline.
 
     Examples:
-        ```python
-        from makeprov import ProvenanceConfig, GLOBAL_CONFIG
+        .. code-block:: python
 
-        GLOBAL_CONFIG = ProvenanceConfig(prov_dir="artifacts/prov", out_fmt="trig")
-        ```
+            from makeprov import ProvenanceConfig, GLOBAL_CONFIG
+
+            GLOBAL_CONFIG = ProvenanceConfig(
+                prov_dir="artifacts/prov", out_fmt="trig"
+            )
     """
 
     base_iri: str | None = None
@@ -60,11 +62,11 @@ def apply_config(conf_obj, toml_ref):
         Load configuration overrides from a file and apply them to the global
         settings:
 
-        ```python
-        from makeprov.config import GLOBAL_CONFIG, apply_config
+        .. code-block:: python
 
-        apply_config(GLOBAL_CONFIG, "@config/provenance.toml")
-        ```
+            from makeprov.config import GLOBAL_CONFIG, apply_config
+
+            apply_config(GLOBAL_CONFIG, "@config/provenance.toml")
     """
 
     def set_conf(dc, params):
@@ -97,9 +99,9 @@ def main(subcommands=None, conf_obj=None, parsers=None):
     Examples:
         Expose decorated rules as CLI commands and honor configuration flags:
 
-        ```bash
-        python -m makeprov --conf @config/provenance.toml --verbose my_rule arg1
-        ```
+        .. code-block:: bash
+
+            python -m makeprov --conf @config/provenance.toml --verbose my_rule arg1
     """
 
     from .core import COMMANDS, flush_prov_buffer, start_prov_buffer
