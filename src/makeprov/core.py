@@ -3,10 +3,12 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, get_args, get_origin, get_type_hints
-from collections.abc import Callable
+from typing import Any, Callable, get_args, get_origin, get_type_hints
+
+from parse import compile as parse_compile, Parser
 
 from .config import ProvenanceConfig, ProvFormat, GLOBAL_CONFIG
 from .paths import InPath, OutPath
@@ -18,8 +20,31 @@ try:
 except Exception:
     rdflib = None
 
-# Simple Make-like registry
-RULES: dict[str, dict[str, Any]] = {}
+
+@dataclass
+class Rule:
+    """Minimal description of a build rule.
+
+    Rules capture the callable to execute, their declared dependencies and
+    outputs, and optional parse templates for parameterized targets. Thin
+    registry helpers in this module use these objects to resolve targets,
+    explain the execution plan, and run builds.
+    """
+
+    name: str
+    func: Callable
+    deps: list[str] = field(default_factory=list)
+    outputs: list[str] = field(default_factory=list)
+    dep_templates: list[str] = field(default_factory=list)
+    out_templates: list[str] = field(default_factory=list)
+    out_parsers: list[Parser] = field(default_factory=list)
+    phony: bool = False
+
+
+# Rule registries
+RULES_BY_TARGET: dict[str, Rule] = {}
+RULES_BY_NAME: dict[str, Rule] = {}
+PATTERN_RULES: list[Rule] = []
 COMMANDS: set[Callable] = set()
 PROV_BUFFER: list[Prov] | None = None
 
@@ -155,6 +180,7 @@ def _is_kind_annotation(ann: Any, cls: type) -> bool:
 def rule(
     *,
     name: str | None = None,
+    phony: bool = False,
     base_iri: str | None = None,
     prov_dir: str | None = None,
     prov_path: str | None = None,
@@ -169,6 +195,10 @@ def rule(
     Args:
         name (str | None): Logical name for the rule; defaults to the function
             name.
+        phony (bool): When ``True``, do not require an :class:`OutPath`
+            parameter and always execute the wrapped function regardless of
+            timestamps. Useful for meta-rules such as aggregators or reporting
+            commands.
         base_iri (str | None): Base IRI for provenance identifiers; overrides
             global configuration when provided.
         prov_dir (str | None): Directory where provenance documents are saved.
@@ -187,7 +217,10 @@ def rule(
 
     Returns:
         Callable: A decorator that wraps the target function and registers it as
-        a rule when outputs are discoverable from annotations.
+        a rule when outputs are discoverable from annotations. Templated
+        :class:`InPath` or :class:`OutPath` defaults using ``str.format`` style
+        placeholders (e.g. ``"data/{sample:d}.txt"``) register as pattern
+        rules and are resolved dynamically for matching targets.
 
     Examples:
         Annotate parameters with :class:`InPath` and :class:`OutPath` to let the
@@ -217,39 +250,59 @@ def rule(
             if _is_kind_annotation(ann, OutPath):
                 out_params.append(p.name)
 
-        if not out_params:
+        if not out_params and not phony:
             raise ValueError(
-                f"Function {func.__name__} must have at least one OutPath "
-                f"(possibly Optional[OutPath]) parameter"
+                f"Function {func.__name__} needs an OutPath "
+                f"parameter unless phony=True"
             )
 
         deps: list[str] = []
         outputs: list[str] = []
-        for p in sig.parameters.values():
-            if p.name in in_params and p.default is not inspect._empty:
-                val = p.default
-                if isinstance(val, InPath):
-                    if not val.is_stream:
-                        deps.append(str(val))
-                elif isinstance(val, (str, Path)):
-                    if str(val) != "-":
-                        deps.append(str(val))
-            if p.name in out_params and p.default is not inspect._empty:
-                val = p.default
-                if isinstance(val, OutPath):
-                    if not val.is_stream:
-                        outputs.append(str(val))
-                elif isinstance(val, (str, Path)):
-                    if str(val) != "-":
-                        outputs.append(str(val))
+        dep_templates: list[str] = []
+        out_templates: list[str] = []
 
-        register_for_build = bool(outputs)
+        def is_template(s: str) -> bool:
+            return "{" in s and "}" in s
+
+        for p in sig.parameters.values():
+            val = p.default
+
+            if p.name in in_params and val is not inspect._empty:
+                if isinstance(val, InPath):
+                    s = str(val)
+                    if is_template(s):
+                        dep_templates.append(s)
+                    elif not val.is_stream:
+                        deps.append(s)
+                elif isinstance(val, (str, Path)):
+                    s = str(val)
+                    if is_template(s):
+                        dep_templates.append(s)
+                    elif s != "-":
+                        deps.append(s)
+
+            if p.name in out_params and val is not inspect._empty:
+                if isinstance(val, OutPath):
+                    s = str(val)
+                    if is_template(s):
+                        out_templates.append(s)
+                    elif not val.is_stream:
+                        outputs.append(s)
+                elif isinstance(val, (str, Path)):
+                    s = str(val)
+                    if is_template(s):
+                        out_templates.append(s)
+                    elif s != "-":
+                        outputs.append(s)
+
         logical_name = name or func.__name__
 
         @functools.wraps(func)
         def wrapped(*args, **kwargs):
             bound = sig.bind_partial(*args, **kwargs)
             bound.apply_defaults()
+
+            fmt_kwargs = bound.arguments
 
             global GLOBAL_CONFIG
             base_config = config or GLOBAL_CONFIG
@@ -268,29 +321,54 @@ def rule(
             in_files: list[Path] = []
             out_files: list[Path] = []
 
-            for pname in in_params:
+            def _format_if_template(val: str) -> str:
+                if "{" in val and "}" in val:
+                    return val.format(**fmt_kwargs)
+                return val
+
+            def normalize_in(pname: str) -> list[Path]:
                 val = bound.arguments.get(pname)
+                paths: list[Path] = []
                 if isinstance(val, InPath):
-                    if not val.is_stream:
-                        in_files.append(Path(val))
+                    s = _format_if_template(str(val))
+                    new_val = val.__class__(s)
+                    bound.arguments[pname] = new_val
+                    if not new_val.is_stream:
+                        paths.append(Path(s))
                 elif val is None:
-                    continue
+                    return paths
                 else:
-                    if str(val) != "-":
-                        in_files.append(Path(val))
+                    s = _format_if_template(str(val))
+                    bound.arguments[pname] = type(val)(s) if s != val else val
+                    if s != "-":
+                        paths.append(Path(s))
+                return paths
+
+            def normalize_out(pname: str) -> list[Path]:
+                val = bound.arguments.get(pname)
+                paths: list[Path] = []
+                if isinstance(val, OutPath):
+                    s = _format_if_template(str(val))
+                    new_val = val.__class__(s)
+                    bound.arguments[pname] = new_val
+                    if not new_val.is_stream:
+                        paths.append(Path(s))
+                elif val is None:
+                    return paths
+                else:
+                    s = _format_if_template(str(val))
+                    bound.arguments[pname] = type(val)(s) if s != val else val
+                    if s != "-":
+                        paths.append(Path(s))
+                return paths
+
+            for pname in in_params:
+                in_files.extend(normalize_in(pname))
 
             for pname in out_params:
-                val = bound.arguments.get(pname)
-                if isinstance(val, OutPath):
-                    if not val.is_stream:
-                        out_files.append(Path(val))
-                elif val is None:
-                    continue
-                else:
-                    if str(val) != "-":
-                        out_files.append(Path(val))
+                out_files.extend(normalize_out(pname))
 
-            if not rule_config.force and not needs_update(out_files, in_files):
+            if not phony and not rule_config.force and not needs_update(out_files, in_files):
                 logging.info("Skipping %s (up to date)", logical_name)
                 return None
 
@@ -359,88 +437,206 @@ def rule(
                         "Failed to write provenance for %s: %s", logical_name, prov_exc
                     )
 
-        COMMANDS.add(wrapped)
-        if register_for_build:
-            target = outputs[0]
-            RULES[target] = {
-                "deps": deps,
-                "outputs": outputs,
-                "func": wrapped,
-            }
+        rule_obj = Rule(
+            name=logical_name,
+            func=wrapped,
+            deps=deps,
+            outputs=outputs,
+            dep_templates=dep_templates,
+            out_templates=out_templates,
+            out_parsers=[parse_compile(t) for t in out_templates],
+            phony=phony,
+        )
 
+        RULES_BY_NAME[logical_name] = rule_obj
+
+        if rule_obj.out_templates:
+            PATTERN_RULES.append(rule_obj)
+        else:
+            for t in rule_obj.outputs:
+                if t in RULES_BY_TARGET:
+                    other = RULES_BY_TARGET[t]
+                    raise ValueError(
+                        f"Multiple rules produce {t!r}: {other.name!r} and {logical_name!r}"
+                    )
+                RULES_BY_TARGET[t] = rule_obj
+
+        COMMANDS.add(wrapped)
         return wrapped
 
     return decorator
 
 
-@rule()
-def build(target: OutPath, _seen=None):
-    """Recursively build a target after its dependencies when stale.
+def resolve_target(target: str) -> tuple[Rule, dict[str, Any]]:
+    """Resolve a target to its registered rule and parameters.
+
+    Concrete targets are looked up directly in :data:`RULES_BY_TARGET`. Pattern
+    rules are attempted in registration order using :mod:`parse` templates.
+    """
+
+    if target in RULES_BY_TARGET:
+        return RULES_BY_TARGET[target], {}
+
+    for rule_obj in PATTERN_RULES:
+        for parser in rule_obj.out_parsers:
+            match = parser.parse(target)
+            if match is not None:
+                return rule_obj, match.named
+
+    raise RuntimeError(f"No rule to build target {target!r}")
+
+
+@rule(phony=True)
+def build(target: OutPath, _seen: set[str] | None = None):
+    """Recursively build a target and its prerequisites.
 
     Args:
-        target (OutPath): Path to the output to build. The path must correspond
-            to a rule that was registered via :func:`rule`.
-        _seen (set[str] | None): Internal set to detect graph cycles; callers
-            typically omit this argument.
-
-    Returns:
-        None: The function executes registered rule callbacks for dependencies
-        and the target in topological order.
-
-    Examples:
-        .. code-block:: python
-
-            from makeprov import build
-
-            # Build a specific target created by a decorated rule
-            build("data/output.txt")
+        target (OutPath): Path to the output to build. Paths may be concrete or
+            match templated outputs registered with :func:`rule`.
+        _seen (set[str] | None): Internal set to detect graph cycles.
     """
+
     top_level = _seen is None
     if _seen is None:
         _seen = set()
-    target = str(target)
-    if target in _seen:
-        raise RuntimeError(f"Cycle in build graph at {target!r}")
-    _seen.add(target)
+
+    target_str = str(target)
+    if target_str in _seen:
+        raise RuntimeError(f"Cycle in build graph at {target_str!r}")
+    _seen.add(target_str)
 
     if top_level:
         start_prov_buffer()
 
-    rule = RULES[target]
-    for dep in rule["deps"]:
-        if dep in RULES:
+    try:
+        rule_obj, params = resolve_target(target_str)
+
+        dep_paths = list(rule_obj.deps)
+        for tmpl in rule_obj.dep_templates:
+            dep_paths.append(tmpl.format(**params))
+
+        for dep in dep_paths:
+            try:
+                resolve_target(dep)
+            except RuntimeError:
+                continue
             build(dep, _seen)
-    rule["func"]()
 
-    if top_level:
-        flush_prov_buffer()
+        rule_obj.func(**params)
+    finally:
+        if top_level:
+            flush_prov_buffer()
 
 
-@rule()
-def build_all(_: OutPath = None):
-    """Build all registered targets that have no dependents.
+def plan(target: str) -> list[tuple[str, Rule, dict[str, Any]]]:
+    """Return the execution order for building a target.
 
-    Args:
-        _ (OutPath | None): Placeholder parameter required for the rule
-            decorator. It is ignored at runtime.
-
-    Returns:
-        None: Executes each rule whose output is not consumed by another rule.
-
-    Examples:
-        .. code-block:: python
-
-            from makeprov import build_all
-
-            # Build every terminal target in the dependency graph
-            build_all()
+    The plan is derived using :func:`resolve_target` for each dependency,
+    ensuring concrete and templated rules are treated uniformly.
     """
-    global RULES
 
-    all_deps, all_outputs = set(), set()
-    for rule in RULES.values():
-        all_deps |= set(rule["deps"])
-        all_outputs |= set(rule["outputs"])
+    seen_targets: set[str] = set()
+    visiting: set[str] = set()
+    order: list[tuple[str, Rule, dict[str, Any]]] = []
 
-    for target in all_outputs - all_deps:
+    def dfs(t: str):
+        if t in seen_targets:
+            return
+        if t in visiting:
+            raise RuntimeError(f"Cycle in build graph at {t!r}")
+        visiting.add(t)
+
+        rule_obj, params = resolve_target(t)
+        dep_paths = list(rule_obj.deps)
+        for tmpl in rule_obj.dep_templates:
+            dep_paths.append(tmpl.format(**params))
+
+        for d in dep_paths:
+            try:
+                resolve_target(d)
+            except RuntimeError:
+                continue
+            dfs(d)
+
+        visiting.remove(t)
+        seen_targets.add(t)
+        order.append((t, rule_obj, params))
+
+    dfs(target)
+    return order
+
+
+def explain(target: str) -> None:
+    """Log the rule used for each target in build order."""
+
+    for tgt, rule_obj, _ in plan(target):
+        logging.info("target %s via rule %s", tgt, rule_obj.name)
+
+
+def to_dot(target: str) -> str:
+    """Render the dependency graph for ``target`` in DOT format."""
+
+    edges: list[str] = []
+    seen: set[tuple[str, str]] = set()
+
+    for tgt, rule_obj, params in plan(target):
+        dep_paths = list(rule_obj.deps)
+        for tmpl in rule_obj.dep_templates:
+            dep_paths.append(tmpl.format(**params))
+
+        for dep in dep_paths:
+            try:
+                resolve_target(dep)
+            except RuntimeError:
+                continue
+            if (dep, rule_obj.name) not in seen:
+                edges.append(f'"{dep}" -> "{rule_obj.name}";')
+                seen.add((dep, rule_obj.name))
+
+        outputs = list(rule_obj.outputs)
+        for tmpl in rule_obj.out_templates:
+            outputs.append(tmpl.format(**params))
+
+        for out in outputs:
+            if (rule_obj.name, out) not in seen:
+                edges.append(f'"{rule_obj.name}" -> "{out}";')
+                seen.add((rule_obj.name, out))
+
+    return "digraph workflow {\n  " + "\n  ".join(edges) + "\n}"
+
+
+def list_rules() -> list[str]:
+    """Return registered rule names in alphabetical order."""
+
+    return sorted(RULES_BY_NAME.keys())
+
+
+def list_targets() -> list[str]:
+    """Return concrete targets produced by non-pattern rules."""
+
+    return sorted(RULES_BY_TARGET.keys())
+
+
+def root_targets() -> list[str]:
+    """Return concrete targets that are not dependencies of other rules."""
+
+    concrete = set(RULES_BY_TARGET.keys())
+    deps: set[str] = set()
+    for rule_obj in RULES_BY_TARGET.values():
+        deps |= set(rule_obj.deps)
+    return sorted(concrete - deps)
+
+
+def dry_run_build(target: str) -> None:
+    """Log the steps required to build ``target`` without executing rules."""
+
+    for tgt, rule_obj, _ in plan(target):
+        logging.info("would run rule %s for target %s", rule_obj.name, tgt)
+
+
+@rule(name="build_all", phony=True)
+def build_all(_: OutPath | None = None):
+    """Build all concrete targets that have no dependents."""
+
+    for target in root_targets():
         build(target)

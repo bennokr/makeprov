@@ -35,6 +35,13 @@ from makeprov.config import GLOBAL_CONFIG, apply_config
 apply_config(GLOBAL_CONFIG, '{force=true, out_fmt="trig"}')
 ```
 
+## Inspecting dependency graphs
+
+Two CLI flags help you explore build order without executing any rules:
+
+- ``--explain TARGET`` logs which rule will satisfy a target.
+- ``--to-dot TARGET`` prints a Graphviz DOT representation of the dependency graph.
+
 ## Example TOML file
 
 ```toml

@@ -6,7 +6,16 @@ from pathlib import Path
 from rdflib import Graph, Literal, Namespace
 from rdflib.namespace import RDF, XSD
 
-from makeprov import InPath, OutPath, ProvenanceConfig, build, main, rule
+from makeprov import (
+    InPath,
+    OutPath,
+    ProvenanceConfig,
+    build,
+    list_targets,
+    main,
+    plan,
+    rule,
+)
 
 
 @rule(name="test_process_data")
@@ -162,3 +171,76 @@ def test_cli_merge_prov(tmp_path, monkeypatch):
     ]
 
     assert len(activities) == 2
+
+
+def test_pattern_rules_resolve_and_format(monkeypatch, tmp_path):
+    @rule(name="templated_upper")
+    def templated(
+        sample: int | None = None,
+        src: InPath = InPath("raw/{sample:d}.txt"),
+        dst: OutPath = OutPath("out/{sample:d}.txt"),
+    ):
+        with src.open("r") as handle, dst.open("w") as out_handle:
+            out_handle.write(handle.read().upper())
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "raw" / "3.txt").write_text("abc")
+
+    build("out/3.txt")
+
+    assert (tmp_path / "out" / "3.txt").exists()
+    assert (tmp_path / "out" / "3.txt").read_text() == "ABC"
+    targets = list_targets()
+    assert "out/3.txt" not in targets  # templated targets stay pattern based
+
+
+def test_multi_output_rules_register_all_targets(monkeypatch, tmp_path):
+    @rule(name="dual_outputs")
+    def dual(a: OutPath = OutPath("a.txt"), b: OutPath = OutPath("b.txt")):
+        a.write_text("A")
+        b.write_text("B")
+
+    monkeypatch.chdir(tmp_path)
+
+    build("b.txt")
+
+    assert (tmp_path / "a.txt").read_text() == "A"
+    assert (tmp_path / "b.txt").read_text() == "B"
+    assert set(list_targets()) >= {"a.txt", "b.txt"}
+
+
+def test_phony_rules_and_plan(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    @rule(name="artifact_rule")
+    def artifact(out: OutPath = OutPath("artifact.txt")):
+        out.write_text("payload")
+
+    @rule(name="report", phony=True)
+    def report(_: int | None = None):
+        calls.append("report")
+
+    monkeypatch.chdir(tmp_path)
+
+    build("artifact.txt")
+    report()
+
+    assert calls == ["report"]
+    planned = plan("artifact.txt")
+    assert planned[-1][1].name == "artifact_rule"
+
+
+def test_cli_graph_flags(monkeypatch, capsys, tmp_path):
+    @rule(name="graph_rule")
+    def graph_rule(out: OutPath = OutPath("graph-target.txt")):
+        out.write_text("dot")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys, "argv", ["prog", "--to-dot", "graph-target.txt"], raising=False
+    )
+
+    main()
+    stdout = capsys.readouterr().out
+    assert "graph-target.txt" in stdout
