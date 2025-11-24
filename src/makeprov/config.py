@@ -122,6 +122,16 @@ def main(subcommands=None, conf_obj=None, parsers=None):
     parent.add_argument(
         "-v", "--verbose", action="count", default=0, help="Show more logging output"
     )
+    parent.add_argument(
+        "--explain",
+        help="Show dependency resolution for TARGET without running rules",
+        metavar="TARGET",
+    )
+    parent.add_argument(
+        "--to-dot",
+        help="Render dependency graph for TARGET in DOT format",
+        metavar="TARGET",
+    )
 
     def apply_globals(argv):
         ns, _ = parent.parse_known_args(argv)
@@ -134,6 +144,18 @@ def main(subcommands=None, conf_obj=None, parsers=None):
     apply_globals(sys.argv[1:])  # apply effects early
     logging.debug(f"Config: {GLOBAL_CONFIG}")
     try:
+        early_ns = parent.parse_known_args(sys.argv[1:])[0]
+        if early_ns.explain:
+            from .core import explain
+
+            explain(early_ns.explain)
+            return
+        if early_ns.to_dot:
+            from .core import to_dot
+
+            print(to_dot(early_ns.to_dot))
+            return
+
         if GLOBAL_CONFIG.merge:
             start_prov_buffer()
         defopt.run(

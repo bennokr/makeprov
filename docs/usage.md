@@ -39,6 +39,30 @@ build("data/output.txt")
 Use :func:`makeprov.core.build_all` to trigger every terminal target in the
 graph, which is convenient for CI pipelines.
 
+### Parameterized targets
+
+Default :class:`InPath` or :class:`OutPath` arguments can contain
+``str.format``-style placeholders. The decorator stores the associated
+templates and uses :mod:`parse` to extract parameters from requested targets:
+
+```python
+@rule()
+def align(
+    sample: int | None = None,
+    read1: InPath = InPath("reads/{sample:d}_R1.fq"),
+    bam: OutPath = OutPath("results/{sample:d}.bam"),
+):
+    bam.write_text(read1.read_text())
+
+build("results/42.bam")  # calls align(sample=42)
+```
+
+### Phony/meta rules
+
+Pass ``phony=True`` to :func:`makeprov.core.rule` to register orchestration or
+reporting helpers that do not produce outputs or should always run regardless of
+timestamps. These rules still participate in the CLI via :data:`makeprov.core.COMMANDS`.
+
 ## Command-line entry point
 
 The :func:`makeprov.config.main` helper exposes decorated rules as CLI
@@ -49,10 +73,14 @@ rules run, making it easy to tailor provenance behavior per invocation.
 python -m makeprov --conf @config/provenance.toml uppercase data/input.txt data/output.txt
 ```
 
-Combine `--verbose` flags to increase logging during command execution:
+Combine `--verbose` flags to increase logging during command execution, or use
+``--explain`` / ``--to-dot`` to inspect dependency resolution without executing
+rules:
 
 ```bash
 python -m makeprov -vv uppercase data/input.txt data/output.txt
+python -m makeprov --explain data/output.txt
+python -m makeprov --to-dot data/output.txt
 ```
 
 ## Streaming input and output

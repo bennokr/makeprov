@@ -1,10 +1,12 @@
 # makeprov: Pythonic Provenance Tracking
 
-This library provides a way to track file provenance in Python workflows using PROV (W3C Provenance) semantics. It supports defining input/output files via decorators and automatically generates provenance datasets.
+This library provides a way to track file provenance in Python workflows using PROV (W3C Provenance) semantics. Decorators declare inputs and outputs, provenance is written automatically, and templated targets can be resolved on demand.
 
 ## Features
 
 - Use decorators to define rules for workflows.
+- Resolve templated targets (``results/{sample}.txt``) via ``parse``-style patterns.
+- Support phony/meta rules for orchestration alongside file-producing rules.
 - Automatically generate RDF-based provenance metadata.
 - Handles input and output streams.
 - Integrates with Python's type hints for easy configuration.
@@ -27,23 +29,22 @@ from makeprov import rule, InPath, OutPath, build
 
 @rule()
 def process_data(
-    input_file: InPath = InPath('input.txt'), 
-    output_file: OutPath = OutPath('output.txt')
+    sample: int | None = None,
+    input_file: InPath = InPath('data/{sample:d}.txt'),
+    output_file: OutPath = OutPath('results/{sample:d}.txt')
 ):
     with input_file.open('r') as infile, output_file.open('w') as outfile:
         data = infile.read()
         outfile.write(data.upper())
 
 if __name__ == '__main__':
-    process_data()
+    # Build a specific templated target and its prerequisites
+    from makeprov import build
+    build('results/1.txt')
 
-    # or as a command line interface
+    # Or expose rules via a command line interface
     import defopt
     defopt.run(process_data)
-
-    # or as a workflow graph that automatically (re)generates all dependencies
-    from makeprov import build
-    build('output.txt')
 ```
 
 You can execute `example.py` via the CLI like so:
@@ -56,6 +57,10 @@ python example.py build-all --conf='{"base_iri": "http://mybaseiri.org/", "prov_
 
 # Or set configuration through a TOML file
 python example.py build-all --conf=@my_config.toml
+
+# Inspect dependency resolution without executing rules
+python example.py --explain results/1.txt
+python example.py --to-dot results/1.txt
 ```
 
 ### Complex CSV-to-RDF Workflow
