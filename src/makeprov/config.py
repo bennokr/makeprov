@@ -85,7 +85,7 @@ def apply_config(conf_obj, toml_ref):
     set_conf(conf_obj, param)
 
 
-def main(subcommands=None, conf_obj=None, parsers=None):
+def main(subcommands=None, conf_obj=None, argparse_kwargs={}, **kwargs):
     """Entry point for running registered CLI subcommands.
 
     Args:
@@ -94,7 +94,6 @@ def main(subcommands=None, conf_obj=None, parsers=None):
             registered commands.
         conf_obj (ProvenanceConfig | None): Configuration to update from command
             line flags; defaults to :data:`GLOBAL_CONFIG`.
-        parsers (dict | None): Optional custom defopt parsers.
 
     Examples:
         Expose decorated rules as CLI commands and honor configuration flags:
@@ -105,6 +104,7 @@ def main(subcommands=None, conf_obj=None, parsers=None):
     """
 
     from .core import COMMANDS, flush_prov_buffer, start_prov_buffer
+    from .core import build, build_all, explain, to_dot
 
     global GLOBAL_CONFIG
 
@@ -117,18 +117,27 @@ def main(subcommands=None, conf_obj=None, parsers=None):
         "--conf",
         action="append",
         default=[],
-        help="Set config param from TOML snippet or @file",
+        help="Set config param from TOML snippet or @file.toml",
     )
     parent.add_argument(
-        "-v", "--verbose", action="count", default=0, help="Show more logging output"
+        "-v", "--verbose", action="count", default=0, help="Show more logging output (-vv for even more)"
     )
     parent.add_argument(
-        "--explain",
+        "-a", "--build-all", action="store_true",
+        help="Build all concrete targets that have no dependents",
+    )
+    parent.add_argument(
+        "-b", "--build",
+        help="Recursively build a TARGET and its prerequisites",
+        metavar="TARGET",
+    )
+    parent.add_argument(
+        "-e", "--explain",
         help="Show dependency resolution for TARGET without running rules",
         metavar="TARGET",
     )
     parent.add_argument(
-        "--to-dot",
+        "-d", "--to-dot",
         help="Render dependency graph for TARGET in DOT format",
         metavar="TARGET",
     )
@@ -145,14 +154,16 @@ def main(subcommands=None, conf_obj=None, parsers=None):
     logging.debug(f"Config: {GLOBAL_CONFIG}")
     try:
         early_ns = parent.parse_known_args(sys.argv[1:])[0]
+        if early_ns.build_all:
+            build_all()
+            return
+        if early_ns.build:
+            build(early_ns.build)
+            return
         if early_ns.explain:
-            from .core import explain
-
             explain(early_ns.explain)
             return
         if early_ns.to_dot:
-            from .core import to_dot
-
             print(to_dot(early_ns.to_dot))
             return
 
@@ -160,9 +171,9 @@ def main(subcommands=None, conf_obj=None, parsers=None):
             start_prov_buffer()
         defopt.run(
             subcommands,
-            parsers=parsers or {},
             argv=sys.argv[1:],
-            argparse_kwargs={"parents": [parent]},
+            argparse_kwargs={"parents": [parent], **argparse_kwargs},
+            **kwargs
         )
     finally:
         if GLOBAL_CONFIG.merge:

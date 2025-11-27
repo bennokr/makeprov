@@ -394,44 +394,42 @@ def rule(
             finally:
                 t1 = datetime.now(timezone.utc)
                 try:
-                    should_record = logical_name != "build"
+                    # Make sure results are a list
+                    if isinstance(result, RDFMixin):
+                        results = [result]
+                    else:
+                        results = []
+                        if isinstance(result, (list, tuple, set)):
+                            for r in result:
+                                if isinstance(r, RDFMixin):
+                                    results.append(r)
 
-                    if should_record:
-                        if isinstance(result, RDFMixin):
-                            results = [result]
-                        else:
-                            results = []
-                            if isinstance(result, (list, tuple, set)):
-                                for r in result:
-                                    if isinstance(r, RDFMixin):
-                                        results.append(r)
+                    prov = Prov.create(
+                        base_iri=rule_config.base_iri,
+                        name=logical_name,
+                        run_id=t0.strftime("%Y%m%dT%H%M%S"),
+                        t0=t0,
+                        t1=t1,
+                        inputs=[Path(p) for p in in_files],
+                        outputs=[Path(p) for p in out_files],
+                        results=results,
+                        success=exc is None,
+                    )
+                    if prov_path is not None:
+                        rule_prov_path = prov_path
+                    elif rule_config.prov_path is not None:
+                        rule_prov_path = rule_config.prov_path
+                    else:
+                        rule_prov_path = Path(rule_config.prov_dir) / logical_name
 
-                        prov = Prov.create(
-                            base_iri=rule_config.base_iri,
-                            name=logical_name,
-                            run_id=t0.strftime("%Y%m%dT%H%M%S"),
-                            t0=t0,
-                            t1=t1,
-                            inputs=[Path(p) for p in in_files],
-                            outputs=[Path(p) for p in out_files],
-                            results=results,
-                            success=exc is None,
+                    if PROV_BUFFER is not None:
+                        PROV_BUFFER.append(prov)
+                    else:
+                        prov.write(
+                            rule_prov_path,
+                            fmt=rule_config.out_fmt,
+                            context=effective_context,
                         )
-                        if prov_path is not None:
-                            rule_prov_path = prov_path
-                        elif rule_config.prov_path is not None:
-                            rule_prov_path = rule_config.prov_path
-                        else:
-                            rule_prov_path = Path(rule_config.prov_dir) / logical_name
-
-                        if PROV_BUFFER is not None:
-                            PROV_BUFFER.append(prov)
-                        else:
-                            prov.write(
-                                rule_prov_path,
-                                fmt=rule_config.out_fmt,
-                                context=effective_context,
-                            )
                 except Exception as prov_exc:  # noqa: BLE001
                     logging.warning(
                         "Failed to write provenance for %s: %s", logical_name, prov_exc
@@ -486,7 +484,6 @@ def resolve_target(target: str) -> tuple[Rule, dict[str, Any]]:
     raise RuntimeError(f"No rule to build target {target!r}")
 
 
-@rule(phony=True)
 def build(target: OutPath, _seen: set[str] | None = None):
     """Recursively build a target and its prerequisites.
 
@@ -634,8 +631,7 @@ def dry_run_build(target: str) -> None:
         logging.info("would run rule %s for target %s", rule_obj.name, tgt)
 
 
-@rule(name="build_all", phony=True)
-def build_all(_: OutPath | None = None):
+def build_all():
     """Build all concrete targets that have no dependents."""
 
     for target in root_targets():
