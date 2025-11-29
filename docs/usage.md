@@ -154,3 +154,14 @@ def build_site(
 
 Invoking ``build("site/1/")`` runs the fragment rule, writes directory outputs,
 and emits a single merged provenance dataset for the entire workflow.
+
+## Controlling provenance framing
+
+``Prov`` objects can be serialized directly via :meth:`~makeprov.prov.Prov.to_jsonld`
+and :meth:`~makeprov.prov.Prov.to_graph`, which mirror the
+:class:`~makeprov.rdfmixin.RDFMixin` API. By default the provenance graph is
+stored in the default RDF graph, but setting ``Prov.frame = "results"`` moves it
+into a dedicated named graph while leaving result entities in the default graph.
+In JSON-LD that produces a nested structure under ``"provenance"`` keyed by the
+graph identifier, while TriG outputs add a named provenance context alongside
+the default graph.

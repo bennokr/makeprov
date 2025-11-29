@@ -408,6 +408,11 @@ def rule(
             finally:
                 t1 = datetime.now(timezone.utc)
                 try:
+                    for pname in in_params:
+                        val = bound.arguments.get(pname)
+                        if isinstance(val, InDir):
+                            in_files.extend(Path(p) for p in val.children)
+
                     for pname in out_params:
                         val = bound.arguments.get(pname)
                         if isinstance(val, OutDir):

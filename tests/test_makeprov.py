@@ -3,7 +3,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from rdflib import Graph, Literal, Namespace
+from rdflib import Dataset, Graph, Literal, Namespace
 from rdflib.namespace import RDF, XSD
 
 from makeprov import (
@@ -18,6 +18,7 @@ from makeprov import (
     plan,
     rule,
 )
+from makeprov.prov import Prov
 
 
 @rule(name="test_process_data")
@@ -330,10 +331,15 @@ def test_indir_tracks_inputs(monkeypatch, tmp_path):
     config = ProvenanceConfig(prov_dir=str(prov_dir))
 
     @rule(name="consume", config=config)
-    def consume(bundle: InDir = InDir("data/{sample}/"), sample: str = "s1"):
+    def consume(
+        bundle: InDir = InDir("data/{sample}/"),
+        out: OutPath = OutPath("out.txt"),
+        sample: str = "s1",
+    ):
         main_txt = bundle.file("main.txt")
         aux_txt = bundle.file("aux/info.txt")
         content = main_txt.read_text().strip() + aux_txt.read_text().strip()
+        out.write_text(content)
         return content
 
     monkeypatch.chdir(tmp_path)
@@ -347,13 +353,77 @@ def test_indir_tracks_inputs(monkeypatch, tmp_path):
     assert len(prov_files) == 1
 
     prov_json = json.loads(prov_files[0].read_text())
-    inputs = [
-        node
-        for node in prov_json["provenance"]
-        if node.get("type") == "prov:Entity"
-        and node.get("generatedAtTime") is None
-        and node.get("id", "").startswith("file:")
-    ]
+    inputs: list[dict] = []
+    for node in prov_json["provenance"]:
+        used = node.get("used")
+        if not used:
+            continue
+        for entry in used:
+            if isinstance(entry, dict) and entry.get("type") == "prov:Entity":
+                inputs.append(entry)
 
     assert any(node["id"].endswith("data/s1/main.txt") for node in inputs)
     assert any(node["id"].endswith("data/s1/aux/info.txt") for node in inputs)
+
+
+def test_prov_results_frame_jsonld(monkeypatch, tmp_path):
+    prov_dir = tmp_path / "prov"
+    config = ProvenanceConfig(prov_dir=str(prov_dir), context=True)
+    original_frame = Prov.frame
+    Prov.frame = "results"
+
+    try:
+        @rule(name="just_outputs", config=config)
+        def just_outputs(out: OutPath = OutPath("json_out.txt")):
+            out.write_text("ok")
+
+        monkeypatch.chdir(tmp_path)
+        just_outputs()
+
+        prov_files = list(prov_dir.glob("*.json"))
+        assert prov_files
+
+        prov_json = json.loads(prov_files[0].read_text())
+        prov_id = prov_json["provenance"].keys().__iter__().__next__()
+        assert "@graph" in prov_json
+        assert prov_json["@context"]["provenance"]["@container"] == [
+            "@graph",
+            "@id",
+        ]
+        assert prov_id in prov_json["provenance"]
+    finally:
+        Prov.frame = original_frame
+
+
+def test_prov_results_frame_trig(monkeypatch, tmp_path):
+    prov_dir = tmp_path / "prov"
+    config = ProvenanceConfig(prov_dir=str(prov_dir), out_fmt="trig")
+    original_frame = Prov.frame
+    Prov.frame = "results"
+
+    try:
+        @rule(name="graph_rule", config=config)
+        def graph_rule(out: OutPath = OutPath("trig_out.txt")):
+            out.write_text("ok")
+
+        monkeypatch.chdir(tmp_path)
+        graph_rule()
+
+        prov_files = list(prov_dir.glob("*.trig"))
+        assert prov_files
+
+        dataset = Dataset().parse(data=prov_files[0].read_text(), format="trig")
+        contexts = [ctx for ctx in dataset.graphs() if ctx != dataset.default_context]
+        prov_context = next(
+            (
+                ctx
+                for ctx in contexts
+                if str(ctx.identifier).endswith(f"prov-{graph_rule.__name__}")
+            ),
+            None,
+        )
+        assert prov_context is not None
+        assert len(dataset.get_context(prov_context.identifier)) > 0
+        assert len(dataset.default_context) > 0
+    finally:
+        Prov.frame = original_frame
