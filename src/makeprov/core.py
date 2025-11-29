@@ -11,7 +11,7 @@ from typing import Any, Callable, get_args, get_origin, get_type_hints
 from parse import compile as parse_compile, Parser
 
 from .config import ProvenanceConfig, ProvFormat, GLOBAL_CONFIG
-from .paths import InPath, OutPath
+from .paths import InDir, InPath, OutDir, OutPath
 from .prov import Prov
 from .rdfmixin import RDFMixin
 
@@ -46,68 +46,66 @@ RULES_BY_TARGET: dict[str, Rule] = {}
 RULES_BY_NAME: dict[str, Rule] = {}
 PATTERN_RULES: list[Rule] = []
 COMMANDS: set[Callable] = set()
-PROV_BUFFER: list[Prov] | None = None
+PROV_BUFFERS: list[list[Prov]] = []
+
+
+def _current_prov_buffer() -> list[Prov] | None:
+    """Return the most recently started provenance buffer, if any."""
+
+    if not PROV_BUFFERS:
+        return None
+    return PROV_BUFFERS[-1]
 
 
 def start_prov_buffer() -> None:
     """Create a provenance buffer to batch writes.
 
-    This function is typically invoked at the start of a command-line session
-    (see :func:`makeprov.config.main`) to accumulate ``Prov`` objects produced
-    by multiple rule executions. Buffered provenance is merged and flushed with
-    :func:`flush_prov_buffer`.
-
-    Examples:
-        Start buffering provenance records before running several rules:
-
-        .. code-block:: python
-
-            from makeprov.core import start_prov_buffer, flush_prov_buffer
-
-            start_prov_buffer()
-            try:
-                rule_a()
-                rule_b()
-            finally:
-                flush_prov_buffer()
+    This function can be called multiple times to form a stack of provenance
+    buffers. Nested buffers allow a rule decorated with ``merge=True`` to
+    accumulate provenance from any rules it invokes and then merge that
+    provenance into a single document.
     """
 
-    global PROV_BUFFER
-    PROV_BUFFER = []
+    PROV_BUFFERS.append([])
 
 
-def flush_prov_buffer() -> None:
-    """Write and clear any buffered provenance records.
+def flush_prov_buffer(
+    *,
+    prov_path: str | Path | None = None,
+    config: ProvenanceConfig | None = None,
+    fmt: ProvFormat | None = None,
+    context: bool | None = None,
+) -> Prov | None:
+    """Write or propagate the most recent provenance buffer.
 
-    If :func:`start_prov_buffer` has been called and the buffer contains
-    ``Prov`` objects, they are merged into a single document and written using
-    the global configuration. The buffer is cleared regardless of write
-    success, so callers should wrap their work in a ``try/finally`` block.
-
-    Examples:
-        Flush the buffer after running a series of build steps:
-
-        .. code-block:: python
-
-            from makeprov.core import flush_prov_buffer, start_prov_buffer
-
-            start_prov_buffer()
-            # ... run decorated rules ...
-            flush_prov_buffer()
+    Returns the merged :class:`Prov` object for the flushed buffer. When a
+    parent buffer exists, the merged provenance is appended to it for further
+    aggregation; otherwise, the merged provenance is written to disk using the
+    provided configuration (falling back to :data:`GLOBAL_CONFIG`).
     """
 
-    global PROV_BUFFER
-    try:
-        if PROV_BUFFER:
-            prov = Prov.merge(PROV_BUFFER)
-            prov.write(
-                prov_path=GLOBAL_CONFIG.prov_path
-                or Path(GLOBAL_CONFIG.prov_dir) / prov.name,
-                fmt=GLOBAL_CONFIG.out_fmt,
-                context=GLOBAL_CONFIG.context,
-            )
-    finally:
-        PROV_BUFFER = None
+    if not PROV_BUFFERS:
+        return None
+
+    buffer = PROV_BUFFERS.pop()
+    if not buffer:
+        return None
+
+    merged = Prov.merge(buffer)
+
+    parent = _current_prov_buffer()
+    if parent is not None:
+        parent.append(merged)
+        return merged
+
+    cfg = config or GLOBAL_CONFIG
+    destination = prov_path or cfg.prov_path or Path(cfg.prov_dir) / merged.name
+    merged.write(
+        destination,
+        fmt=fmt if fmt is not None else cfg.out_fmt,
+        context=context if context is not None else cfg.context,
+    )
+    return merged
 
 
 def needs_update(outputs, deps) -> bool:
@@ -169,12 +167,12 @@ def _is_kind_annotation(ann: Any, cls: type) -> bool:
             _is_kind_annotation(Optional[InPath], InPath)  # True
     """
 
-    if ann is cls:
+    if ann is cls or (inspect.isclass(ann) and issubclass(ann, cls)):
         return True
     origin = get_origin(ann)
     if origin is None:
         return False
-    return any(a is cls for a in get_args(ann))
+    return any(a is cls or (inspect.isclass(a) and issubclass(a, cls)) for a in get_args(ann))
 
 
 def rule(
@@ -189,6 +187,7 @@ def rule(
     out_fmt: ProvFormat | None = None,
     config: ProvenanceConfig | None = None,
     context: bool | None = None,
+    merge: bool | None = None,
 ):
     """Decorate a function as a build rule with automatic provenance.
 
@@ -214,6 +213,9 @@ def rule(
             :data:`makeprov.config.GLOBAL_CONFIG`.
         context (bool | None): Whether to embed JSON-LD context in output when
             writing provenance.
+        merge (bool | None): When ``True``, buffer provenance for this rule and
+            any nested rule calls, emitting a single merged document. Defaults
+            to the configured merge behavior.
 
     Returns:
         Callable: A decorator that wraps the target function and registers it as
@@ -313,10 +315,12 @@ def rule(
                 force=force if force is not None else base_config.force,
                 dry_run=dry_run if dry_run is not None else base_config.dry_run,
                 out_fmt=out_fmt if out_fmt is not None else base_config.out_fmt,
+                merge=base_config.merge,
                 context=base_config.context,
             )
 
             effective_context = context if context is not None else rule_config.context
+            rule_merge = merge if merge is not None else rule_config.merge
 
             in_files: list[Path] = []
             out_files: list[Path] = []
@@ -368,6 +372,11 @@ def rule(
             for pname in out_params:
                 out_files.extend(normalize_out(pname))
 
+            for pname in in_params:
+                val = bound.arguments.get(pname)
+                if isinstance(val, InDir):
+                    in_files.extend(Path(p) for p in val.children)
+
             if not phony and not rule_config.force and not needs_update(out_files, in_files):
                 logging.info("Skipping %s (up to date)", logical_name)
                 return None
@@ -380,6 +389,11 @@ def rule(
                     out_files,
                 )
                 return None
+
+            buffer_started = False
+            if rule_merge:
+                start_prov_buffer()
+                buffer_started = True
 
             t0 = datetime.now(timezone.utc)
             exc: Exception | None = None
@@ -394,6 +408,11 @@ def rule(
             finally:
                 t1 = datetime.now(timezone.utc)
                 try:
+                    for pname in out_params:
+                        val = bound.arguments.get(pname)
+                        if isinstance(val, OutDir):
+                            out_files.extend(Path(p) for p in val.children)
+
                     # Make sure results are a list
                     if isinstance(result, RDFMixin):
                         results = [result]
@@ -422,11 +441,20 @@ def rule(
                     else:
                         rule_prov_path = Path(rule_config.prov_dir) / logical_name
 
-                    if PROV_BUFFER is not None:
-                        PROV_BUFFER.append(prov)
+                    target_buffer = _current_prov_buffer()
+                    if target_buffer is not None:
+                        target_buffer.append(prov)
                     else:
                         prov.write(
                             rule_prov_path,
+                            fmt=rule_config.out_fmt,
+                            context=effective_context,
+                        )
+
+                    if buffer_started:
+                        flush_prov_buffer(
+                            prov_path=rule_prov_path,
+                            config=rule_config,
                             fmt=rule_config.out_fmt,
                             context=effective_context,
                         )

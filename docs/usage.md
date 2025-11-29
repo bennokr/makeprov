@@ -93,8 +93,64 @@ creating temporary files:
 from makeprov import InPath, OutPath, rule
 
 @rule()
-def word_count(src: InPath = InPath("-"), dest: OutPath = OutPath("-")):
-    """Count words from stdin and write the result to stdout."""
-    content = src.read_text()
-    dest.write_text(str(len(content.split())))
+    def word_count(src: InPath = InPath("-"), dest: OutPath = OutPath("-")):
+        """Count words from stdin and write the result to stdout."""
+        content = src.read_text()
+        dest.write_text(str(len(content.split())))
 ```
+
+## Tracking outputs within directories
+
+Use :class:`~makeprov.paths.OutDir` when a rule produces multiple files under a
+common directory. The :meth:`~makeprov.paths.OutDir.file` helper returns
+:class:`~makeprov.paths.OutPath` instances rooted in that directory while
+recording them for provenance collection. :class:`~makeprov.paths.InDir` offers
+the same tracked-directory behavior for inputs.
+
+```python
+from makeprov import InDir, OutDir, rule
+
+@rule()
+def write_assets(bundle: OutDir = OutDir("assets/v1/")):
+    readme = bundle.file("README.txt")
+    logo = bundle.file("logo.txt")
+
+    readme.write_text("asset bundle\n")
+    logo.write_text("v1 logo\n")
+```
+
+When the rule finishes, the provenance record includes both `assets/v1/README.txt`
+and `assets/v1/logo.txt` even though only the directory was declared as a
+parameter.
+
+## Merging provenance across nested rules
+
+Pass ``merge=True`` to :func:`~makeprov.core.rule` to accumulate provenance from
+any rules invoked within the decorated function. This produces a single
+provenance document spanning the entire call tree, which is especially helpful
+for orchestration functions.
+
+```python
+from makeprov import InDir, InPath, OutDir, OutPath, rule
+
+@rule()
+def render_fragment(name: str, dest: OutPath = OutPath("site/fragments/{name}.txt")):
+    dest.write_text(f"fragment: {name}\n")
+
+@rule(merge=True)
+def build_site(
+    sample: int,
+    source_dir: InDir = InDir("content/{sample:d}/"),
+    out: OutDir = OutDir("site/{sample:d}/"),
+):
+    index = out.file("index.html")
+    report = out.file("report.md")
+    logo = out.file("assets/logo.txt")
+
+    render_fragment("logo", dest=logo)
+    report.write_text(source_dir.file("main.txt").read_text())
+    index.write_text("<html><body>see report.md</body></html>\n")
+```
+
+Invoking ``build("site/1/")`` runs the fragment rule, writes directory outputs,
+and emits a single merged provenance dataset for the entire workflow.

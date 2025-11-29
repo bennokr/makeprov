@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .config import ProvenanceConfig, GLOBAL_CONFIG, main
-from .paths import ProvPath, InPath, OutPath
+from .paths import ProvPath, InPath, OutPath, OutDir, InDir
 from .core import (
     COMMANDS,
     build,
@@ -27,6 +27,8 @@ __all__ = [
     "ProvPath",
     "InPath",
     "OutPath",
+    "OutDir",
+    "InDir",
     "rule",
     "needs_update",
     "build",

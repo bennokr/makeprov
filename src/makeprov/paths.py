@@ -172,3 +172,55 @@ class OutPath(ProvPath):
         # Ensure directories exist for output
         self.parent.mkdir(parents=True, exist_ok=True)
         return super().open(mode, *args, **kwargs)
+
+
+class OutDir(OutPath):
+    """Output directory that tracks files declared within it.
+
+    The :meth:`file` helper produces :class:`OutPath` instances rooted in the
+    directory while recording them for provenance collection.
+    """
+
+    def __new__(cls, *paths: str | bytes | ProvPath):  # type: ignore[override]
+        self = super().__new__(cls, *paths)
+        self._children: list[OutPath] = []
+        return self
+
+    def file(self, name: str | os.PathLike[str]) -> OutPath:
+        child = OutPath(self / name)
+        self._children.append(child)
+        return child
+
+    # Backward-compatible alias
+    def out(self, name: str | os.PathLike[str]) -> OutPath:
+        return self.file(name)
+
+    @property
+    def children(self) -> tuple[OutPath, ...]:
+        return tuple(self._children)
+
+
+class InDir(InPath):
+    """Input directory that tracks files declared within it.
+
+    The :meth:`file` helper produces :class:`InPath` instances rooted in the
+    directory while recording them for provenance collection.
+    """
+
+    def __new__(cls, *paths: str | bytes | ProvPath):  # type: ignore[override]
+        self = super().__new__(cls, *paths)
+        self._children: list[InPath] = []
+        return self
+
+    def file(self, name: str | os.PathLike[str]) -> InPath:
+        child = InPath(self / name)
+        self._children.append(child)
+        return child
+
+    # Backward-compatible alias for symmetry with ``OutDir``
+    def out(self, name: str | os.PathLike[str]) -> InPath:
+        return self.file(name)
+
+    @property
+    def children(self) -> tuple[InPath, ...]:
+        return tuple(self._children)

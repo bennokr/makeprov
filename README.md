@@ -98,6 +98,47 @@ Run the entire workflow, including CSV generation and RDF export, with:
 python complex_example.py build-sales-report
 ```
 
+### Bundling nested provenance and directory outputs
+
+Rules can merge the provenance from any rules they invoke by passing
+``merge=True`` to :func:`makeprov.rule`. Pair this with
+:class:`makeprov.OutDir` to declare a directory and then materialize multiple
+outputs beneath it while keeping them linked to a single provenance record. Use
+:class:`makeprov.InDir` for the same tracked-directory semantics on inputs.
+
+```python
+from makeprov import InDir, InPath, OutDir, OutPath, rule, build
+
+@rule()
+def render_fragment(name: str, dest: OutPath = OutPath("site/fragments/{name}.txt")):
+    dest.write_text(f"fragment: {name}\n")
+
+@rule(merge=True)
+def build_site(
+    sample: int,
+    source_dir: InDir = InDir("content/{sample:d}/"),
+    out: OutDir = OutDir("site/{sample:d}/"),
+):
+    # Declare outputs inside the directory while tracking them for provenance
+    index = out.file("index.html")
+    report = out.file("report.md")
+    logo = out.file("assets/logo.txt")
+
+    content = source_dir.file("main.txt")
+
+    render_fragment("logo", dest=logo)
+    report.write_text(content.read_text())
+    index.write_text("<html><body>see report.md</body></html>\n")
+
+if __name__ == "__main__":
+    build("site/1/")
+```
+
+Running ``build("site/1/")`` generates the directory outputs, reuses the
+fragment-producing rule, and emits a single provenance file covering the
+entire call tree. A complete script is available in
+[`merge_outdir_example.py`](merge_outdir_example.py).
+
 ### Configuration
 
 You can customize the provenance tracking with the following options:

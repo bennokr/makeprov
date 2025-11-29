@@ -7,7 +7,9 @@ from rdflib import Graph, Literal, Namespace
 from rdflib.namespace import RDF, XSD
 
 from makeprov import (
+    InDir,
     InPath,
+    OutDir,
     OutPath,
     ProvenanceConfig,
     build,
@@ -244,3 +246,114 @@ def test_cli_graph_flags(monkeypatch, capsys, tmp_path):
     main()
     stdout = capsys.readouterr().out
     assert "graph-target.txt" in stdout
+
+
+def test_rule_local_merge(monkeypatch, tmp_path):
+    prov_dir = tmp_path / "prov"
+    config = ProvenanceConfig(prov_dir=str(prov_dir), merge=False)
+
+    @rule(name="child", config=config)
+    def child(out: OutPath = OutPath("child.txt")):
+        out.write_text("child")
+
+    @rule(name="parent", config=config, merge=True)
+    def parent(out: OutPath = OutPath("parent.txt")):
+        child()
+        out.write_text("parent")
+
+    monkeypatch.chdir(tmp_path)
+    parent()
+
+    prov_files = list(prov_dir.glob("*"))
+    assert len(prov_files) == 1
+
+    prov_json = json.loads(prov_files[0].read_text())
+    activities = [
+        node
+        for node in prov_json["provenance"]
+        if node.get("type") == "prov:Activity"
+        or (
+            isinstance(node.get("type"), list)
+            and "prov:Activity" in node.get("type", [])
+        )
+    ]
+
+    assert len(activities) == 2
+
+
+def test_outdir_tracks_outputs(monkeypatch, tmp_path):
+    prov_dir = tmp_path / "prov"
+    config = ProvenanceConfig(prov_dir=str(prov_dir))
+
+    @rule(name="build_site", config=config)
+    def build_site(
+        sample: int,
+        input_file: InPath = InPath("data/{sample:d}.txt"),
+        out: OutDir = OutDir("results/{sample:d}/"),
+    ):
+        report = out.file("report.md")
+        index = out.file("index.html")
+        plot = out.file("plot.png")
+
+        report.write_text("...")
+        index.write_text("...")
+        with plot.open("wb") as f:
+            f.write(b"...")
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "1.txt").write_text("input")
+
+    build_site(1)
+
+    assert (tmp_path / "results/1/report.md").exists()
+    assert (tmp_path / "results/1/index.html").exists()
+    assert (tmp_path / "results/1/plot.png").exists()
+
+    prov_files = list(prov_dir.glob("*"))
+    assert len(prov_files) == 1
+
+    prov_json = json.loads(prov_files[0].read_text())
+    outputs = [
+        node
+        for node in prov_json["provenance"]
+        if node.get("wasGeneratedBy")
+    ]
+
+    assert any(node["id"].endswith("results/1/report.md") for node in outputs)
+    assert any(node["id"].endswith("results/1/index.html") for node in outputs)
+    assert any(node["id"].endswith("results/1/plot.png") for node in outputs)
+
+
+def test_indir_tracks_inputs(monkeypatch, tmp_path):
+    prov_dir = tmp_path / "prov"
+    config = ProvenanceConfig(prov_dir=str(prov_dir))
+
+    @rule(name="consume", config=config)
+    def consume(bundle: InDir = InDir("data/{sample}/"), sample: str = "s1"):
+        main_txt = bundle.file("main.txt")
+        aux_txt = bundle.file("aux/info.txt")
+        content = main_txt.read_text().strip() + aux_txt.read_text().strip()
+        return content
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data" / "s1" / "aux").mkdir(parents=True)
+    (tmp_path / "data" / "s1" / "main.txt").write_text("hello\n")
+    (tmp_path / "data" / "s1" / "aux" / "info.txt").write_text("world\n")
+
+    assert consume() == "helloworld"
+
+    prov_files = list(prov_dir.glob("*"))
+    assert len(prov_files) == 1
+
+    prov_json = json.loads(prov_files[0].read_text())
+    inputs = [
+        node
+        for node in prov_json["provenance"]
+        if node.get("type") == "prov:Entity"
+        and node.get("generatedAtTime") is None
+        and node.get("id", "").startswith("file:")
+    ]
+
+    assert any(node["id"].endswith("data/s1/main.txt") for node in inputs)
+    assert any(node["id"].endswith("data/s1/aux/info.txt") for node in inputs)
