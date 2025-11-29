@@ -6,9 +6,9 @@ produced by `makeprov`.
 
 ## Defining rules
 
-Rules are simple Python callables annotated with :class:`makeprov.paths.InPath`
-for dependencies and :class:`makeprov.paths.OutPath` for outputs. The
-:func:`makeprov.core.rule` decorator handles dependency inference, timestamp
+Rules are simple Python callables annotated with {class}`makeprov.paths.InPath`
+for dependencies and {class}`makeprov.paths.OutPath` for outputs. The
+{func}`makeprov.core.rule` decorator handles dependency inference, timestamp
 checks, and provenance writing.
 
 ```python
@@ -25,7 +25,7 @@ metadata in the configured output directory.
 
 ## Building dependency graphs
 
-When you provide default values for :class:`~makeprov.paths.OutPath` parameters,
+When you provide default values for {class}`~makeprov.paths.OutPath` parameters,
 `makeprov` registers the rule as part of a build graph. You can then ask the
 system to build a target and its prerequisites:
 
@@ -36,14 +36,14 @@ from makeprov import build
 build("data/output.txt")
 ```
 
-Use :func:`makeprov.core.build_all` to trigger every terminal target in the
+Use {func}`makeprov.core.build_all` to trigger every terminal target in the
 graph, which is convenient for CI pipelines.
 
 ### Parameterized targets
 
-Default :class:`InPath` or :class:`OutPath` arguments can contain
+Default {class}`InPath` or {class}`OutPath` arguments can contain
 ``str.format``-style placeholders. The decorator stores the associated
-templates and uses :mod:`parse` to extract parameters from requested targets:
+templates and uses {mod}`parse` to extract parameters from requested targets:
 
 ```python
 @rule()
@@ -59,13 +59,13 @@ build("results/42.bam")  # calls align(sample=42)
 
 ### Phony/meta rules
 
-Pass ``phony=True`` to :func:`makeprov.core.rule` to register orchestration or
+Pass ``phony=True`` to {func}`makeprov.core.rule` to register orchestration or
 reporting helpers that do not produce outputs or should always run regardless of
-timestamps. These rules still participate in the CLI via :data:`makeprov.core.COMMANDS`.
+timestamps. These rules still participate in the CLI via {data}`makeprov.core.COMMANDS`.
 
 ## Command-line entry point
 
-The :func:`makeprov.config.main` helper exposes decorated rules as CLI
+The {func}`makeprov.config.main` helper exposes decorated rules as CLI
 subcommands using `defopt`. Any `--conf` options you pass are applied before the
 rules run, making it easy to tailor provenance behavior per invocation.
 

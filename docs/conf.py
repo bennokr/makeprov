@@ -20,6 +20,13 @@ extensions = [
     "sphinx.ext.githubpages",
 ]
 
+extensions += ["sphinx.ext.intersphinx"]
+
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    # add others as needed, e.g. numpy, pandas, sphinx, etc.
+}
+
 # Parse both .rst and .md
 source_suffix = {
     ".rst": "restructuredtext",
@@ -50,5 +57,6 @@ autodoc_default_options = {
     "undoc-members": True,
     "show-inheritance": True,
 }
+nitpicky = True
 
 html_theme = "sphinx_rtd_theme"

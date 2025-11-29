@@ -1,6 +1,6 @@
 # Configuration
 
-`makeprov` reads settings from :data:`makeprov.config.GLOBAL_CONFIG` and allows
+`makeprov` reads settings from {data}`makeprov.config.GLOBAL_CONFIG` and allows
 runtime overrides via the command line. This page summarizes the available
 options and demonstrates common configurations.
 
@@ -19,7 +19,7 @@ options and demonstrates common configurations.
 
 ## Applying overrides
 
-Supply one or more ``--conf`` flags to :func:`makeprov.config.main`. Each flag
+Supply one or more ``--conf`` flags to {func}`makeprov.config.main`. Each flag
 accepts either a TOML snippet or an ``@``-prefixed path to a TOML file.
 
 ```bash

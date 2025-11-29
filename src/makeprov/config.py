@@ -123,21 +123,21 @@ def main(subcommands=None, conf_obj=None, argparse_kwargs={}, **kwargs):
         "-v", "--verbose", action="count", default=0, help="Show more logging output (-vv for even more)"
     )
     parent.add_argument(
-        "-a", "--build-all", action="store_true",
+        "--build-all", action="store_true",
         help="Build all concrete targets that have no dependents",
     )
     parent.add_argument(
-        "-b", "--build",
+        "--build",
         help="Recursively build a TARGET and its prerequisites",
         metavar="TARGET",
     )
     parent.add_argument(
-        "-e", "--explain",
+        "--explain",
         help="Show dependency resolution for TARGET without running rules",
         metavar="TARGET",
     )
     parent.add_argument(
-        "-d", "--to-dot",
+        "--to-dot",
         help="Render dependency graph for TARGET in DOT format",
         metavar="TARGET",
     )

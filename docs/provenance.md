@@ -1,6 +1,6 @@
 # Provenance output
 
-Every rule decorated with :func:`makeprov.core.rule` can emit provenance records
+Every rule decorated with {func}`makeprov.core.rule` can emit provenance records
 that describe the activity, inputs, outputs, environment, and results. The
 library supports JSON-LD and TriG outputs, aligning with the W3C PROV data
 model.
@@ -24,7 +24,7 @@ graph data.
 ## TriG datasets
 
 TriG output writes a dataset that combines the default graph for provenance with
-named graphs for any :class:`makeprov.rdfmixin.RDFMixin` results returned by a
+named graphs for any {class}`makeprov.rdfmixin.RDFMixin` results returned by a
 rule. This is useful when merging provenance with domain-specific RDF data.
 
 ```python
@@ -41,6 +41,6 @@ activity.
 
 ## Result graphs
 
-Return instances of :class:`~makeprov.rdfmixin.RDFMixin` from your rules to
+Return instances of {class}`~makeprov.rdfmixin.RDFMixin` from your rules to
 include domain-specific RDF alongside provenance. Each result object is embedded
 in a named graph so consumers can query both provenance and outputs together.
