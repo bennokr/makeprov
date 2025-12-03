@@ -10,6 +10,6 @@ Home <self>
 usage
 configuration
 provenance
-api
 snakemake
+api
 ```

@@ -45,6 +45,7 @@ html_static_path = ["_static"]
 # MyST options (optional but common)
 myst_enable_extensions = [
     "linkify",
+    "colon_fence",
 ]
 
 # Automatically generate autosummary stub files
