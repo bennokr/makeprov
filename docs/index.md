@@ -11,4 +11,5 @@ usage
 configuration
 provenance
 api
+snakemake
 ```

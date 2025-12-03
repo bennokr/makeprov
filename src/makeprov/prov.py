@@ -605,7 +605,6 @@ class Prov:
         out.parent.mkdir(parents=True, exist_ok=True)
 
         if fmt == "json":
-            print(context)
             data = self.to_jsonld(frame=frame, with_context=context)
             final = out.with_suffix(".json")
             logging.info("Writing JSON-LD provenance %s", final)

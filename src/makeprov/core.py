@@ -84,7 +84,6 @@ def flush_prov_buffer(
     aggregation; otherwise, the merged provenance is written to disk using the
     provided configuration (falling back to :data:`GLOBAL_CONFIG`).
     """
-    print('start', context)
 
     if not PROV_BUFFERS:
         return None
@@ -102,7 +101,6 @@ def flush_prov_buffer(
 
     cfg = config or GLOBAL_CONFIG
     destination = prov_path or cfg.prov_path or Path(cfg.prov_dir) / merged.name
-    print('end', context)
     merged.write(
         destination,
         fmt=fmt if fmt is not None else cfg.out_fmt,
@@ -459,7 +457,6 @@ def rule(
                         )
 
                     if buffer_started:
-                        print(rule_config)
                         flush_prov_buffer(
                             prov_path=rule_prov_path,
                             config=rule_config,

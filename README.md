@@ -11,6 +11,8 @@ This library provides a way to track file provenance in Python workflows using P
 - Handles input and output streams.
 - Integrates with Python's type hints for easy configuration.
 - Outputs provenance data in TRIG format if `rdflib` is installed; otherwise outputs json-ld.
+- Optional Snakemake CLI integration that turns `--d3dag` and `--detailed-summary`
+  output into PROV JSON-LD artifacts ready for inclusion in Snakemake HTML reports.
 
 ## Installation
 
@@ -18,6 +20,12 @@ You can install the module directly from PyPI:
 
 ```bash
 pip install makeprov
+```
+
+Install the Snakemake extra if you want to use the CLI bridge:
+
+```bash
+pip install "makeprov[snakemake]"
 ```
 
 ## Usage
@@ -106,6 +114,40 @@ Rules can merge the provenance from any rules they invoke by passing
 outputs beneath it while keeping them linked to a single provenance record. Use
 `makeprov.InDir` for the same tracked-directory semantics on inputs.
 See [`merge_outdir_example.py`](merge_outdir_example.py) for an example.
+
+### Snakemake workflows
+
+`makeprov` ships with an optional subcommand that shells out to Snakemake and
+converts the job DAG together with ``--detailed-summary`` metadata into a PROV
+document. The CLI mirrors the familiar configuration flags from
+`makeprov.config` and writes JSON-LD by default.
+
+```bash
+python -m makeprov.snakemake --prov-path prov/snakemake -- --snakefile Snakefile --nolock
+```
+
+Wire the resulting file into a report by marking it with Snakemake’s
+`report()` helper:
+
+```python
+rule provenance:
+    input:
+        "results/word_count.txt"
+    output:
+        "prov/snakemake.json"
+    shell:
+        (
+            "python -m makeprov.snakemake "
+            "--prov-path prov/snakemake "
+            "--out-fmt json --context --frame provenance "
+            "-- "
+            "--snakefile {workflow.snakefile} --nolock {input}"
+        )
+```
+
+Using the optional `--forceall-dag` flag ensures that the job-level dependency
+edges in the provenance graph remain complete even when Snakemake skips nodes
+that are already up to date.
 
 ### Configuration
 
