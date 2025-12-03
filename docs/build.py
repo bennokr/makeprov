@@ -24,6 +24,10 @@ def main() -> None:
 
     docs_source = repo_root / "docs"
     docs_build = docs_source / "_build" / "html"
+    if docs_build.exists():
+        import shutil
+
+        shutil.rmtree(docs_build)
     docs_build.mkdir(parents=True, exist_ok=True)
 
     args = [
