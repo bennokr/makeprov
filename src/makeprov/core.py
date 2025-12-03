@@ -10,7 +10,7 @@ from typing import Any, Callable, get_args, get_origin, get_type_hints
 
 from parse import compile as parse_compile, Parser
 
-from .config import ProvenanceConfig, ProvFormat, GLOBAL_CONFIG
+from .config import ProvenanceConfig, ProvFormat, Frame, GLOBAL_CONFIG
 from .paths import InDir, InPath, OutDir, OutPath
 from .prov import Prov
 from .rdfmixin import RDFMixin
@@ -74,6 +74,7 @@ def flush_prov_buffer(
     prov_path: str | Path | None = None,
     config: ProvenanceConfig | None = None,
     fmt: ProvFormat | None = None,
+    frame: Frame | None = None,
     context: bool | None = None,
 ) -> Prov | None:
     """Write or propagate the most recent provenance buffer.
@@ -83,6 +84,7 @@ def flush_prov_buffer(
     aggregation; otherwise, the merged provenance is written to disk using the
     provided configuration (falling back to :data:`GLOBAL_CONFIG`).
     """
+    print('start', context)
 
     if not PROV_BUFFERS:
         return None
@@ -100,9 +102,11 @@ def flush_prov_buffer(
 
     cfg = config or GLOBAL_CONFIG
     destination = prov_path or cfg.prov_path or Path(cfg.prov_dir) / merged.name
+    print('end', context)
     merged.write(
         destination,
         fmt=fmt if fmt is not None else cfg.out_fmt,
+        frame=frame if frame is not None else cfg.frame,
         context=context if context is not None else cfg.context,
     )
     return merged
@@ -185,6 +189,7 @@ def rule(
     force: bool | None = None,
     dry_run: bool | None = None,
     out_fmt: ProvFormat | None = None,
+    frame: Frame | None = None,
     config: ProvenanceConfig | None = None,
     context: bool | None = None,
     merge: bool | None = None,
@@ -209,6 +214,8 @@ def rule(
             wrapped function.
         out_fmt (ProvFormat | None): Output format for provenance files
             (``"json"`` or ``"trig"``).
+        frame (Frame | None): Which structure to make primary subject of jsonld or 
+            trig named graph. Options: `"provenance"` or `"results"`.
         config (ProvenanceConfig | None): Configuration object to use instead of
             :data:`makeprov.config.GLOBAL_CONFIG`.
         context (bool | None): Whether to embed JSON-LD context in output when
@@ -315,12 +322,10 @@ def rule(
                 force=force if force is not None else base_config.force,
                 dry_run=dry_run if dry_run is not None else base_config.dry_run,
                 out_fmt=out_fmt if out_fmt is not None else base_config.out_fmt,
-                merge=base_config.merge,
-                context=base_config.context,
+                frame=frame if frame is not None else base_config.frame,
+                merge=merge if merge is not None else base_config.merge,
+                context=context if context is not None else base_config.context,
             )
-
-            effective_context = context if context is not None else rule_config.context
-            rule_merge = merge if merge is not None else rule_config.merge
 
             in_files: list[Path] = []
             out_files: list[Path] = []
@@ -391,7 +396,7 @@ def rule(
                 return None
 
             buffer_started = False
-            if rule_merge:
+            if rule_config.merge:
                 start_prov_buffer()
                 buffer_started = True
 
@@ -419,19 +424,15 @@ def rule(
                             out_files.extend(Path(p) for p in val.children)
 
                     # Make sure results are a list
-                    if isinstance(result, RDFMixin):
-                        results = [result]
+                    if isinstance(result, (list, tuple, set)):
+                        results = result
                     else:
-                        results = []
-                        if isinstance(result, (list, tuple, set)):
-                            for r in result:
-                                if isinstance(r, RDFMixin):
-                                    results.append(r)
+                        results = [result]
 
                     prov = Prov.create(
                         base_iri=rule_config.base_iri,
                         name=logical_name,
-                        run_id=t0.strftime("%Y%m%dT%H%M%S"),
+                        run_id=t0.strftime("%Y%m%dT%H%M"),
                         t0=t0,
                         t1=t1,
                         inputs=[Path(p) for p in in_files],
@@ -453,15 +454,18 @@ def rule(
                         prov.write(
                             rule_prov_path,
                             fmt=rule_config.out_fmt,
-                            context=effective_context,
+                            frame=rule_config.frame,
+                            context=rule_config.context,
                         )
 
                     if buffer_started:
+                        print(rule_config)
                         flush_prov_buffer(
                             prov_path=rule_prov_path,
                             config=rule_config,
                             fmt=rule_config.out_fmt,
-                            context=effective_context,
+                            frame=rule_config.frame,
+                            context=rule_config.context,
                         )
                 except Exception as prov_exc:  # noqa: BLE001
                     logging.warning(
@@ -517,7 +521,7 @@ def resolve_target(target: str) -> tuple[Rule, dict[str, Any]]:
     raise RuntimeError(f"No rule to build target {target!r}")
 
 
-def build(target: OutPath, _seen: set[str] | None = None):
+def build(target: OutPath, _seen: set[str] | None = None, **kwargs):
     """Recursively build a target and its prerequisites.
 
     Args:
@@ -555,7 +559,7 @@ def build(target: OutPath, _seen: set[str] | None = None):
         rule_obj.func(**params)
     finally:
         if top_level:
-            flush_prov_buffer()
+            flush_prov_buffer(**kwargs)
 
 
 def plan(target: str) -> list[tuple[str, Rule, dict[str, Any]]]:

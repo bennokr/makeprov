@@ -191,10 +191,6 @@ class OutDir(OutPath):
         self._children.append(child)
         return child
 
-    # Backward-compatible alias
-    def out(self, name: str | os.PathLike[str]) -> OutPath:
-        return self.file(name)
-
     @property
     def children(self) -> tuple[OutPath, ...]:
         return tuple(self._children)
@@ -216,10 +212,6 @@ class InDir(InPath):
         child = InPath(self / name)
         self._children.append(child)
         return child
-
-    # Backward-compatible alias for symmetry with ``OutDir``
-    def out(self, name: str | os.PathLike[str]) -> InPath:
-        return self.file(name)
 
     @property
     def children(self) -> tuple[InPath, ...]:

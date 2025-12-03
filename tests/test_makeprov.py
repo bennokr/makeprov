@@ -368,62 +368,53 @@ def test_indir_tracks_inputs(monkeypatch, tmp_path):
 
 def test_prov_results_frame_jsonld(monkeypatch, tmp_path):
     prov_dir = tmp_path / "prov"
-    config = ProvenanceConfig(prov_dir=str(prov_dir), context=True)
-    original_frame = Prov.frame
-    Prov.frame = "results"
+    config = ProvenanceConfig(prov_dir=str(prov_dir), context=True, frame = "results")
 
-    try:
-        @rule(name="just_outputs", config=config)
-        def just_outputs(out: OutPath = OutPath("json_out.txt")):
-            out.write_text("ok")
+    @rule(name="just_outputs", config=config)
+    def just_outputs(out: OutPath = OutPath("json_out.txt")):
+        out.write_text("ok")
 
-        monkeypatch.chdir(tmp_path)
-        just_outputs()
+    monkeypatch.chdir(tmp_path)
+    just_outputs()
 
-        prov_files = list(prov_dir.glob("*.json"))
-        assert prov_files
+    prov_files = list(prov_dir.glob("*.json"))
+    assert prov_files
 
-        prov_json = json.loads(prov_files[0].read_text())
-        prov_id = prov_json["provenance"].keys().__iter__().__next__()
-        assert "@graph" in prov_json
-        assert prov_json["@context"]["provenance"]["@container"] == [
-            "@graph",
-            "@id",
-        ]
-        assert prov_id in prov_json["provenance"]
-    finally:
-        Prov.frame = original_frame
+    prov_json = json.loads(prov_files[0].read_text())
+    prov_id = prov_json["provenance"].keys().__iter__().__next__()
+    assert "@graph" in prov_json
+    assert prov_json["@context"]["provenance"]["@container"] == [
+        "@graph",
+        "@id",
+    ]
+    assert prov_id in prov_json["provenance"]
 
 
 def test_prov_results_frame_trig(monkeypatch, tmp_path):
     prov_dir = tmp_path / "prov"
-    config = ProvenanceConfig(prov_dir=str(prov_dir), out_fmt="trig")
-    original_frame = Prov.frame
-    Prov.frame = "results"
+    config = ProvenanceConfig(prov_dir=str(prov_dir), out_fmt="trig", frame = "results")
 
-    try:
-        @rule(name="graph_rule", config=config)
-        def graph_rule(out: OutPath = OutPath("trig_out.txt")):
-            out.write_text("ok")
+    @rule(name="graph_rule", config=config)
+    def graph_rule(out: OutPath = OutPath("trig_out.txt")):
+        out.write_text("ok")
 
-        monkeypatch.chdir(tmp_path)
-        graph_rule()
+    monkeypatch.chdir(tmp_path)
+    graph_rule()
 
-        prov_files = list(prov_dir.glob("*.trig"))
-        assert prov_files
+    prov_files = list(prov_dir.glob("*.trig"))
+    assert prov_files
 
-        dataset = Dataset().parse(data=prov_files[0].read_text(), format="trig")
-        contexts = [ctx for ctx in dataset.graphs() if ctx != dataset.default_context]
-        prov_context = next(
-            (
-                ctx
-                for ctx in contexts
-                if str(ctx.identifier).endswith(f"prov-{graph_rule.__name__}")
-            ),
-            None,
-        )
-        assert prov_context is not None
-        assert len(dataset.get_context(prov_context.identifier)) > 0
-        assert len(dataset.default_context) > 0
-    finally:
-        Prov.frame = original_frame
+    dataset = Dataset()
+    dataset.parse(data=prov_files[0].read_text(), format="trig")
+    contexts = [ctx for ctx in dataset.graphs() if ctx != dataset.default_context]
+    prov_context = next(
+        (
+            ctx
+            for ctx in contexts
+            if str(ctx.identifier).endswith(f"prov-{graph_rule.__name__}")
+        ),
+        None,
+    )
+    assert prov_context is not None
+    assert len(dataset.get_context(prov_context.identifier)) > 0
+    assert len(dataset.default_context) == 0

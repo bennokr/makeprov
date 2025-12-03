@@ -10,14 +10,14 @@ def render_fragment(name: str, dest: OutPath = OutPath("site/fragments/{name}.tx
 
 @rule(merge=True)
 def build_site(
-    sample: int,
-    source_dir: InDir = InDir("content/{sample:d}/"),
-    out: OutDir = OutDir("site/{sample:d}/"),
+    sample: str,
+    source_dir: InDir = InDir("{sample}"),
+    out: OutDir = OutDir("site/{sample}/"),
 ):
     index = out.file("index.html")
     report = out.file("report.md")
     logo = out.file("assets/logo.txt")
-    main_content = source_dir.file("main.txt")
+    main_content = source_dir.file("provenance.md")
 
     render_fragment("logo", dest=logo)
     report.write_text(main_content.read_text())
@@ -26,4 +26,4 @@ def build_site(
 
 if __name__ == "__main__":
     # Build a single sample and emit one provenance record for the entire call tree
-    build("site/1/")
+    build("site/docs/", context=True)

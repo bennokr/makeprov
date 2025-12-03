@@ -9,9 +9,10 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Literal, Optional
+from typing import Any, Literal, Optional
 
 from .rdfmixin import RDFMixin
+from .config import Frame
 
 # ---------- JSON-LD dataclasses ----------
 
@@ -21,6 +22,7 @@ COMMON_CONTEXT = {
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
     "xsd": "http://www.w3.org/2001/XMLSchema#",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "schema": "https://schema.org/",
     "id": "@id",
     "type": "@type",
     "provenance": "@graph",
@@ -185,6 +187,7 @@ def project_metadata(dist_name: str | None = None):
     """
     import inspect
     import importlib.metadata as im
+    from packaging.requirements import Requirement
 
     if dist_name is None:
         frame = inspect.stack()[1]
@@ -198,11 +201,18 @@ def project_metadata(dist_name: str | None = None):
         dist = im.distribution(dist_name)
     except im.PackageNotFoundError:
         return None, None, []
+    
+    mandatory = []
+    for req_s in (dist.requires or []):
+        req = Requirement(req_s)
+        # Extras show up as markers containing `extra == ...`
+        if req.marker and "extra" in str(req.marker):
+            continue
+        mandatory.append(str(req))
 
     name = dist.metadata.get("Name")
     version = dist.version
-    requires = dist.requires or []
-    return name, version, requires
+    return name, version, mandatory
 
 
 def pep503_normalize(name: str) -> str:
@@ -268,7 +278,6 @@ def _base(iri: str | None) -> str:
 # ---------- Public Prov builder ----------
 @dataclass
 class Prov:
-    frame: ClassVar[Literal["provenance", "results"]] = "provenance"
     base_iri: str
     name: str
     provenance: list[RDFMixin]
@@ -317,7 +326,7 @@ class Prov:
                     outputs=[Path("output.txt")],
                     results=[],
                 )
-        """
+        """        
         def _iri(tail: str) -> str:
             return f"{_base(base_iri)}{tail}"
 
@@ -337,11 +346,10 @@ class Prov:
             COMMON_CONTEXT["blob"] = f"{base_iri}/blob/{branch}/"
 
             def _iri(tail: str) -> str:
-                return tail
+                return tail # only suffix, put @base in context
 
             def _file_iri(path: Path) -> str:
-                path = Path(path)
-                return path.as_posix()
+                return f'blob:{Path(path).as_posix()}' # blob prefix
 
         activity_id = _file_iri(f"{script.name}#{name}-{run_id}")
         agent_id = _file_iri(script.name)
@@ -353,7 +361,7 @@ class Prov:
         # Agent
         agent = AgentNode(
             id=agent_id,
-            type=("prov:Agent", "prov:SoftwareAgent"),
+            type=("prov:Agent", "prov:SoftwareAgent", "schema:SoftwareSourceCode"),
             label=script.name,
             hasVersion=commit or None,
             source=origin if origin else None,
@@ -422,7 +430,7 @@ class Prov:
                 pkg_name = re.split(r"[<>=!~ ]", pkg, 1)[0]
                 norm = pep503_normalize(pkg_name)
                 dep_iri = f"https://pypi.org/project/{norm}/"
-                reqs.append(DepNode(id=dep_iri, type="rdfs:Resource", label=spec_str))
+                reqs.append(DepNode(id=dep_iri, type="schema:SoftwareSourceCode", label=spec_str))
             env_node = EnvNode(
                 id=env_id,
                 type=("prov:Entity", "prov:Collection"),
@@ -487,25 +495,36 @@ class Prov:
     def _result_entries(self, with_context: bool) -> list[dict]:
         entries: list[dict] = []
         for result_graph, results in self.results:
-            results_obj = result_graph.to_jsonld(with_context=False)
             if results:
-                results_obj.setdefault("@graph", [])
-                for result in results:
-                    if result is not None and isinstance(result, RDFMixin):
-                        results_obj["@graph"].append(
-                            result.to_jsonld(with_context=with_context)
-                        )
-            entries.append(results_obj)
+                graph = []
+                if any(isinstance(result, RDFMixin) for result in results):
+                    for result in results:
+                        if result is not None and isinstance(result, RDFMixin):
+                            o = result.to_jsonld(with_context=with_context)
+                            graph.append(o)
+                else:
+                    try:
+                        import rdflib
+                        for result in results:
+                            if isinstance(result, (rdflib.Graph, rdflib.Dataset)):
+                                o = json.loads(result.serialize(format="json-ld"))
+                                graph.extend(o)
+                    except:
+                        pass
+                if graph:
+                    results_obj = result_graph.to_jsonld(with_context=False)
+                    results_obj.setdefault("@graph", []).extend(graph)
+                    entries.append(results_obj)
         return entries
 
-    def to_jsonld(self, with_context: bool = False) -> dict:
+    def to_jsonld(self, frame: Frame = "provenance", with_context: bool = False) -> dict:
         doc = ProvDoc(provenance=tuple(set(self.provenance)))
         data = doc.to_jsonld(with_context=with_context)
 
         provenance_entries = list(data.pop("provenance", []))
         context_obj = data.pop("@context", None) if with_context else None
 
-        if self.frame == "provenance":
+        if frame == "provenance":
             if with_context and context_obj is not None:
                 data["@context"] = context_obj
             data["provenance"] = provenance_entries + self._result_entries(with_context)
@@ -525,7 +544,7 @@ class Prov:
         data["provenance"] = {prov_id: provenance_entries}
         return data
 
-    def to_graph(self):
+    def to_graph(self, frame: Frame = "provenance"):
         try:
             import rdflib
         except ImportError as exc:
@@ -536,15 +555,16 @@ class Prov:
 
         default_graph = ds.default_context
         prov_graph_target = default_graph
-        if self.frame == "results":
+        if frame == "results":
             prov_graph_target = ds.get_context(self._iri(f"prov-{self.name}"))
 
         for triple in ProvDoc(provenance=tuple(set(self.provenance))).to_graph():
             prov_graph_target.add(triple)
 
         for result_graph, results in self.results:
-            for triple in result_graph.to_graph():
-                default_graph.add(triple)
+            if any(r is not None for r in results):
+                for triple in result_graph.to_graph():
+                    prov_graph_target.add(triple)
             gx = ds.get_context(result_graph.id)
             for result in results:
                 if result is not None:
@@ -557,7 +577,7 @@ class Prov:
 
         return ds
 
-    def write(self, prov_path: str | Path, fmt="json", context=False) -> Path:
+    def write(self, prov_path: str | Path, fmt="json", frame="provenance", context=False) -> Path:
         """Serialize provenance to disk.
 
         Args:
@@ -565,6 +585,8 @@ class Prov:
                 provenance document should be written.
             fmt (str): Output format, ``"json"`` for JSON-LD or ``"trig"`` for
                 RDF TriG.
+            frame (str): Which structure to make primary subject of jsonld or 
+                trig named graph. Options: `"provenance"` or `"results"`.
             context (bool): Whether to include the JSON-LD context inline when
                 writing JSON.
 
@@ -583,14 +605,15 @@ class Prov:
         out.parent.mkdir(parents=True, exist_ok=True)
 
         if fmt == "json":
-            data = self.to_jsonld(with_context=context)
+            print(context)
+            data = self.to_jsonld(frame=frame, with_context=context)
             final = out.with_suffix(".json")
             logging.info("Writing JSON-LD provenance %s", final)
             final.write_text(json.dumps(data, indent=2), encoding="utf-8")
             return final
 
         elif fmt == "trig":
-            ds = self.to_graph()
+            ds = self.to_graph(frame=frame)
             final = out.with_suffix(".trig")
             logging.info("Writing TRIG provenance %s", final)
             ds.serialize(final, format="trig")

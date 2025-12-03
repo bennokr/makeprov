@@ -127,14 +127,13 @@ def export_totals_graph(
     return graph
 
 
-@rule()
-def build_sales_report(
+@rule(phony=True)
+def build_sales_report() -> Graph:
+    """Run the entire workflow and return the final RDF graph."""
     products_csv: OutPath = OutPath("data/products.csv"),
     orders_csv: OutPath = OutPath("data/orders.csv"),
     totals_csv: OutPath = OutPath("data/region_totals.csv"),
     graph_ttl: OutPath = OutPath("data/region_totals.ttl"),
-) -> Graph:
-    """Run the entire workflow and return the final RDF graph."""
     create_seed_data(products_csv=products_csv, orders_csv=orders_csv)
     build_region_totals(
         products_csv=products_csv.as_inpath(),
