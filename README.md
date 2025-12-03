@@ -7,7 +7,7 @@ This library provides a way to track file provenance in Python workflows using P
 - Use decorators to define rules for workflows.
 - Resolve templated targets (``results/{sample}.txt``) via ``parse``-style patterns.
 - Support phony/meta rules for orchestration alongside file-producing rules.
-- Automatically generate RDF-based provenance metadata.
+- Automatically generate RDF-based provenance metadata (`rdflib` optional).
 - Handles input and output streams.
 - Integrates with Python's type hints for easy configuration.
 - Outputs provenance data in TRIG format if `rdflib` is installed; otherwise outputs json-ld.
@@ -56,7 +56,7 @@ python example.py build-all
 python example.py build-all --conf='{"base_iri": "http://mybaseiri.org/", "prov_dir": "my_prov_directory"}' --force --input_file input.txt --output_file final_output.txt
 
 # Or set configuration through a TOML file
-python example.py build-all --conf=@my_config.toml
+python example.py build-all -c @my_config.toml
 
 # Inspect dependency resolution without executing rules
 python example.py --explain results/1.txt
@@ -97,6 +97,15 @@ Run the entire workflow, including CSV generation and RDF export, with:
 ```bash
 python complex_example.py build-sales-report
 ```
+
+### Bundling nested provenance and directory outputs
+
+Rules can merge the provenance from any rules they invoke by passing
+``merge=True`` to `makeprov.rule`. Pair this with
+`makeprov.OutDir` to declare a directory and then materialize multiple
+outputs beneath it while keeping them linked to a single provenance record. Use
+`makeprov.InDir` for the same tracked-directory semantics on inputs.
+See [`merge_outdir_example.py`](merge_outdir_example.py) for an example.
 
 ### Configuration
 

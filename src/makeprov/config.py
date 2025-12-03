@@ -5,7 +5,7 @@ import sys, logging, tomllib as toml, defopt
 import argparse
 
 ProvFormat = Literal["json", "trig"]
-
+Frame = Literal["provenance", "results"]
 
 @dataclass
 class ProvenanceConfig:
@@ -21,6 +21,8 @@ class ProvenanceConfig:
         dry_run: When ``True``, log rule execution without running the wrapped
             function.
         out_fmt: Output format for provenance files (``"json"`` or ``"trig"``).
+        frame: Which structure to make primary subject of jsonld or 
+            trig named graph. Options: `"provenance"` or `"results"`.
         context: Whether JSON-LD outputs include the context inline.
 
     Examples:
@@ -41,6 +43,7 @@ class ProvenanceConfig:
     dry_run: bool = False
     out_fmt: ProvFormat = "json"
     context: bool = False
+    frame: Frame = "provenance"
 
 
 GLOBAL_CONFIG = ProvenanceConfig()

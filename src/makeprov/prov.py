@@ -9,9 +9,10 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from .rdfmixin import RDFMixin
+from .config import Frame
 
 # ---------- JSON-LD dataclasses ----------
 
@@ -21,6 +22,7 @@ COMMON_CONTEXT = {
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
     "xsd": "http://www.w3.org/2001/XMLSchema#",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "schema": "https://schema.org/",
     "id": "@id",
     "type": "@type",
     "provenance": "@graph",
@@ -185,6 +187,7 @@ def project_metadata(dist_name: str | None = None):
     """
     import inspect
     import importlib.metadata as im
+    from packaging.requirements import Requirement
 
     if dist_name is None:
         frame = inspect.stack()[1]
@@ -198,11 +201,18 @@ def project_metadata(dist_name: str | None = None):
         dist = im.distribution(dist_name)
     except im.PackageNotFoundError:
         return None, None, []
+    
+    mandatory = []
+    for req_s in (dist.requires or []):
+        req = Requirement(req_s)
+        # Extras show up as markers containing `extra == ...`
+        if req.marker and "extra" in str(req.marker):
+            continue
+        mandatory.append(str(req))
 
     name = dist.metadata.get("Name")
     version = dist.version
-    requires = dist.requires or []
-    return name, version, requires
+    return name, version, mandatory
 
 
 def pep503_normalize(name: str) -> str:
@@ -316,7 +326,7 @@ class Prov:
                     outputs=[Path("output.txt")],
                     results=[],
                 )
-        """
+        """        
         def _iri(tail: str) -> str:
             return f"{_base(base_iri)}{tail}"
 
@@ -336,11 +346,10 @@ class Prov:
             COMMON_CONTEXT["blob"] = f"{base_iri}/blob/{branch}/"
 
             def _iri(tail: str) -> str:
-                return tail
+                return tail # only suffix, put @base in context
 
             def _file_iri(path: Path) -> str:
-                path = Path(path)
-                return path.as_posix()
+                return f'blob:{Path(path).as_posix()}' # blob prefix
 
         activity_id = _file_iri(f"{script.name}#{name}-{run_id}")
         agent_id = _file_iri(script.name)
@@ -352,7 +361,7 @@ class Prov:
         # Agent
         agent = AgentNode(
             id=agent_id,
-            type=("prov:Agent", "prov:SoftwareAgent"),
+            type=("prov:Agent", "prov:SoftwareAgent", "schema:SoftwareSourceCode"),
             label=script.name,
             hasVersion=commit or None,
             source=origin if origin else None,
@@ -421,7 +430,7 @@ class Prov:
                 pkg_name = re.split(r"[<>=!~ ]", pkg, 1)[0]
                 norm = pep503_normalize(pkg_name)
                 dep_iri = f"https://pypi.org/project/{norm}/"
-                reqs.append(DepNode(id=dep_iri, type="rdfs:Resource", label=spec_str))
+                reqs.append(DepNode(id=dep_iri, type="schema:SoftwareSourceCode", label=spec_str))
             env_node = EnvNode(
                 id=env_id,
                 type=("prov:Entity", "prov:Collection"),
@@ -480,7 +489,95 @@ class Prov:
             all_results.extend(prov.results)
         return cls(base_iri, name, all_provenance, all_results)
 
-    def write(self, prov_path: str | Path, fmt="json", context=False) -> Path:
+    def _iri(self, tail: str) -> str:
+        return f"{_base(self.base_iri)}{tail}"
+
+    def _result_entries(self, with_context: bool) -> list[dict]:
+        entries: list[dict] = []
+        for result_graph, results in self.results:
+            if results:
+                graph = []
+                if any(isinstance(result, RDFMixin) for result in results):
+                    for result in results:
+                        if result is not None and isinstance(result, RDFMixin):
+                            o = result.to_jsonld(with_context=with_context)
+                            graph.append(o)
+                else:
+                    try:
+                        import rdflib
+                        for result in results:
+                            if isinstance(result, (rdflib.Graph, rdflib.Dataset)):
+                                o = json.loads(result.serialize(format="json-ld"))
+                                graph.extend(o)
+                    except:
+                        pass
+                if graph:
+                    results_obj = result_graph.to_jsonld(with_context=False)
+                    results_obj.setdefault("@graph", []).extend(graph)
+                    entries.append(results_obj)
+        return entries
+
+    def to_jsonld(self, frame: Frame = "provenance", with_context: bool = False) -> dict:
+        doc = ProvDoc(provenance=tuple(set(self.provenance)))
+        data = doc.to_jsonld(with_context=with_context)
+
+        provenance_entries = list(data.pop("provenance", []))
+        context_obj = data.pop("@context", None) if with_context else None
+
+        if frame == "provenance":
+            if with_context and context_obj is not None:
+                data["@context"] = context_obj
+            data["provenance"] = provenance_entries + self._result_entries(with_context)
+            return data
+
+        # frame == "results": provenance is nested with its own graph identifier
+        prov_id = self._iri(f"prov-{self.name}")
+        if with_context:
+            updated_context = dict(context_obj or {})
+            updated_context["provenance"] = {
+                "@id": "prov:has_provenance",
+                "@container": ["@graph", "@id"],
+            }
+            data["@context"] = updated_context
+
+        data["@graph"] = self._result_entries(with_context)
+        data["provenance"] = {prov_id: provenance_entries}
+        return data
+
+    def to_graph(self, frame: Frame = "provenance"):
+        try:
+            import rdflib
+        except ImportError as exc:
+            raise RuntimeError("rdflib is required for Prov.to_graph()") from exc
+
+        ds = rdflib.Dataset()
+        ds.bind("", self.base_iri)
+
+        default_graph = ds.default_context
+        prov_graph_target = default_graph
+        if frame == "results":
+            prov_graph_target = ds.get_context(self._iri(f"prov-{self.name}"))
+
+        for triple in ProvDoc(provenance=tuple(set(self.provenance))).to_graph():
+            prov_graph_target.add(triple)
+
+        for result_graph, results in self.results:
+            if any(r is not None for r in results):
+                for triple in result_graph.to_graph():
+                    prov_graph_target.add(triple)
+            gx = ds.get_context(result_graph.id)
+            for result in results:
+                if result is not None:
+                    if isinstance(result, (rdflib.Graph, rdflib.Dataset)):
+                        for triple in result:
+                            gx.add(triple)
+                    elif hasattr(result, "to_graph"):
+                        for triple in result.to_graph():
+                            gx.add(triple)
+
+        return ds
+
+    def write(self, prov_path: str | Path, fmt="json", frame="provenance", context=False) -> Path:
         """Serialize provenance to disk.
 
         Args:
@@ -488,6 +585,8 @@ class Prov:
                 provenance document should be written.
             fmt (str): Output format, ``"json"`` for JSON-LD or ``"trig"`` for
                 RDF TriG.
+            frame (str): Which structure to make primary subject of jsonld or 
+                trig named graph. Options: `"provenance"` or `"results"`.
             context (bool): Whether to include the JSON-LD context inline when
                 writing JSON.
 
@@ -505,43 +604,16 @@ class Prov:
         out = Path(prov_path)
         out.parent.mkdir(parents=True, exist_ok=True)
 
-        doc = ProvDoc(provenance=tuple(set(self.provenance)))
-
         if fmt == "json":
-            data = doc.to_jsonld(with_context=context)
-            for result_graph, results in self.results:
-                results_obj = result_graph.to_jsonld(with_context=False)
-                for result in results:
-                    if result is not None and isinstance(result, RDFMixin):
-                        results_obj.setdefault("@graph", []).append(
-                            result.to_jsonld(with_context=context)
-                        )
-                data["provenance"].append(results_obj)
+            print(context)
+            data = self.to_jsonld(frame=frame, with_context=context)
             final = out.with_suffix(".json")
             logging.info("Writing JSON-LD provenance %s", final)
             final.write_text(json.dumps(data, indent=2), encoding="utf-8")
             return final
 
         elif fmt == "trig":
-            import rdflib
-
-            ds = rdflib.Dataset()
-            ds.bind("", self.base_iri)
-            default_graph = ds.default_context
-
-            for triple in doc.to_graph():
-                default_graph.add(triple)
-
-            for result_graph, results in self.results:
-                for triple in result_graph.to_graph():
-                    default_graph.add(triple)
-                gx = ds.get_context(result_graph.id)
-                for result in results:
-                    if result is not None:
-                        if isinstance(result, (rdflib.Graph, rdflib.Dataset)):
-                            for triple in result.to_graph():
-                                gx.add(triple)
-
+            ds = self.to_graph(frame=frame)
             final = out.with_suffix(".trig")
             logging.info("Writing TRIG provenance %s", final)
             ds.serialize(final, format="trig")
