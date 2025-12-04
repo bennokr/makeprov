@@ -168,6 +168,16 @@ You can customize the provenance tracking with the following options:
  - `force` (bool): Force running of dependencies
  - `dry_run` (bool): Only check workflow, don't run anything
 
+## Documentation
+
+Build the Sphinx docs (including autosummary API stubs) with the docs extra so
+that the CLI dependencies needed for imports are available:
+
+```bash
+pip install -e ".[docs]"
+python docs/build.py
+```
+
 ## Contributing
 
 Contributions are welcome! Please open an issue or submit a pull request.

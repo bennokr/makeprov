@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 try:
     import tomllib  # Python 3.11+
@@ -25,10 +26,13 @@ def main() -> None:
     docs_source = repo_root / "docs"
     docs_build = docs_source / "_build" / "html"
     if docs_build.exists():
-        import shutil
-
         shutil.rmtree(docs_build)
     docs_build.mkdir(parents=True, exist_ok=True)
+
+    autosummary_dir = docs_source / "_autosummary"
+    if autosummary_dir.exists():
+        shutil.rmtree(autosummary_dir)
+    autosummary_dir.mkdir(parents=True, exist_ok=True)
 
     args = [
         "-b",
