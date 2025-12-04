@@ -10,7 +10,7 @@ from typing import Any, Callable, get_args, get_origin, get_type_hints
 
 from parse import compile as parse_compile, Parser
 
-from .config import ProvenanceConfig, ProvFormat, Frame, GLOBAL_CONFIG
+from .config import ProvenanceConfig, ProvFormat, Frame, get_config
 from .paths import InDir, InPath, OutDir, OutPath
 from .prov import Prov
 from .rdfmixin import RDFMixin
@@ -41,23 +41,49 @@ class Rule:
     phony: bool = False
 
 
-# Rule registries
-RULES_BY_TARGET: dict[str, Rule] = {}
-RULES_BY_NAME: dict[str, Rule] = {}
-PATTERN_RULES: list[Rule] = []
-COMMANDS: set[Callable] = set()
-PROV_BUFFERS: list[list[Prov]] = []
+@dataclass
+class Session:
+    """In-memory registries and buffers for a makeprov run."""
+
+    rules_by_target: dict[str, Rule] = field(default_factory=dict)
+    rules_by_name: dict[str, Rule] = field(default_factory=dict)
+    pattern_rules: list[Rule] = field(default_factory=list)
+    commands: set[Callable] = field(default_factory=set)
+    prov_buffers: list[list[Prov]] = field(default_factory=list)
 
 
-def _current_prov_buffer() -> list[Prov] | None:
-    """Return the most recently started provenance buffer, if any."""
+_DEFAULT_SESSION = Session()
 
-    if not PROV_BUFFERS:
+# Backwards-compatible references to the default session.
+RULES_BY_TARGET = _DEFAULT_SESSION.rules_by_target
+RULES_BY_NAME = _DEFAULT_SESSION.rules_by_name
+PATTERN_RULES = _DEFAULT_SESSION.pattern_rules
+COMMANDS = _DEFAULT_SESSION.commands
+PROV_BUFFERS = _DEFAULT_SESSION.prov_buffers
+
+
+def _get_session(session: Session | None = None) -> Session:
+    """Return a provided session or the default shared session."""
+
+    return session or _DEFAULT_SESSION
+
+
+def new_session() -> Session:
+    """Create a fresh session with isolated registries and buffers."""
+
+    return Session()
+
+
+def _current_prov_buffer(session: Session | None = None) -> list[Prov] | None:
+    """Return the most recently started provenance buffer for ``session``."""
+
+    sess = _get_session(session)
+    if not sess.prov_buffers:
         return None
-    return PROV_BUFFERS[-1]
+    return sess.prov_buffers[-1]
 
 
-def start_prov_buffer() -> None:
+def start_prov_buffer(*, session: Session | None = None) -> None:
     """Create a provenance buffer to batch writes.
 
     This function can be called multiple times to form a stack of provenance
@@ -66,7 +92,7 @@ def start_prov_buffer() -> None:
     provenance into a single document.
     """
 
-    PROV_BUFFERS.append([])
+    _get_session(session).prov_buffers.append([])
 
 
 def flush_prov_buffer(
@@ -76,30 +102,33 @@ def flush_prov_buffer(
     fmt: ProvFormat | None = None,
     frame: Frame | None = None,
     context: bool | None = None,
+    session: Session | None = None,
 ) -> Prov | None:
     """Write or propagate the most recent provenance buffer.
 
     Returns the merged :class:`Prov` object for the flushed buffer. When a
     parent buffer exists, the merged provenance is appended to it for further
     aggregation; otherwise, the merged provenance is written to disk using the
-    provided configuration (falling back to :data:`GLOBAL_CONFIG`).
+    provided configuration (falling back to the process-wide configuration via
+    :func:`makeprov.config.get_config`).
     """
 
-    if not PROV_BUFFERS:
+    sess = _get_session(session)
+    if not sess.prov_buffers:
         return None
 
-    buffer = PROV_BUFFERS.pop()
+    buffer = sess.prov_buffers.pop()
     if not buffer:
         return None
 
     merged = Prov.merge(buffer)
 
-    parent = _current_prov_buffer()
+    parent = _current_prov_buffer(sess)
     if parent is not None:
         parent.append(merged)
         return merged
 
-    cfg = config or GLOBAL_CONFIG
+    cfg = config or get_config()
     destination = prov_path or cfg.prov_path or Path(cfg.prov_dir) / merged.name
     merged.write(
         destination,
@@ -191,6 +220,7 @@ def rule(
     config: ProvenanceConfig | None = None,
     context: bool | None = None,
     merge: bool | None = None,
+    session: Session | None = None,
 ):
     """Decorate a function as a build rule with automatic provenance.
 
@@ -215,12 +245,16 @@ def rule(
         frame (Frame | None): Which structure to make primary subject of jsonld or 
             trig named graph. Options: `"provenance"` or `"results"`.
         config (ProvenanceConfig | None): Configuration object to use instead of
-            :data:`makeprov.config.GLOBAL_CONFIG`.
+            the process-wide configuration returned by
+            :func:`makeprov.config.get_config`.
         context (bool | None): Whether to embed JSON-LD context in output when
             writing provenance.
         merge (bool | None): When ``True``, buffer provenance for this rule and
             any nested rule calls, emitting a single merged document. Defaults
             to the configured merge behavior.
+        session (Session | None): Registry and buffer container to use instead
+            of the process-wide default session. Passing a dedicated session
+            isolates rules, commands, and provenance buffers from other runs.
 
     Returns:
         Callable: A decorator that wraps the target function and registers it as
@@ -246,6 +280,7 @@ def rule(
 
     def decorator(func):
         sig = inspect.signature(func)
+        sess = _get_session(session)
         hints = get_type_hints(func)
 
         in_params: list[str] = []
@@ -311,8 +346,7 @@ def rule(
 
             fmt_kwargs = bound.arguments
 
-            global GLOBAL_CONFIG
-            base_config = config or GLOBAL_CONFIG
+            base_config = config or get_config()
             rule_config = ProvenanceConfig(
                 base_iri=base_iri if base_iri is not None else base_config.base_iri,
                 prov_dir=prov_dir if prov_dir is not None else base_config.prov_dir,
@@ -395,7 +429,7 @@ def rule(
 
             buffer_started = False
             if rule_config.merge:
-                start_prov_buffer()
+                start_prov_buffer(session=sess)
                 buffer_started = True
 
             t0 = datetime.now(timezone.utc)
@@ -445,7 +479,7 @@ def rule(
                     else:
                         rule_prov_path = Path(rule_config.prov_dir) / logical_name
 
-                    target_buffer = _current_prov_buffer()
+                    target_buffer = _current_prov_buffer(sess)
                     if target_buffer is not None:
                         target_buffer.append(prov)
                     else:
@@ -463,6 +497,7 @@ def rule(
                             fmt=rule_config.out_fmt,
                             frame=rule_config.frame,
                             context=rule_config.context,
+                            session=sess,
                         )
                 except Exception as prov_exc:  # noqa: BLE001
                     logging.warning(
@@ -480,36 +515,38 @@ def rule(
             phony=phony,
         )
 
-        RULES_BY_NAME[logical_name] = rule_obj
+        sess.rules_by_name[logical_name] = rule_obj
 
         if rule_obj.out_templates:
-            PATTERN_RULES.append(rule_obj)
+            sess.pattern_rules.append(rule_obj)
         else:
             for t in rule_obj.outputs:
-                if t in RULES_BY_TARGET:
-                    other = RULES_BY_TARGET[t]
+                if t in sess.rules_by_target:
+                    other = sess.rules_by_target[t]
                     raise ValueError(
                         f"Multiple rules produce {t!r}: {other.name!r} and {logical_name!r}"
                     )
-                RULES_BY_TARGET[t] = rule_obj
+                sess.rules_by_target[t] = rule_obj
 
-        COMMANDS.add(wrapped)
+        sess.commands.add(wrapped)
         return wrapped
 
     return decorator
 
 
-def resolve_target(target: str) -> tuple[Rule, dict[str, Any]]:
+def resolve_target(target: str, *, session: Session | None = None) -> tuple[Rule, dict[str, Any]]:
     """Resolve a target to its registered rule and parameters.
 
     Concrete targets are looked up directly in :data:`RULES_BY_TARGET`. Pattern
     rules are attempted in registration order using :mod:`parse` templates.
     """
 
-    if target in RULES_BY_TARGET:
-        return RULES_BY_TARGET[target], {}
+    sess = _get_session(session)
 
-    for rule_obj in PATTERN_RULES:
+    if target in sess.rules_by_target:
+        return sess.rules_by_target[target], {}
+
+    for rule_obj in sess.pattern_rules:
         for parser in rule_obj.out_parsers:
             match = parser.parse(target)
             if match is not None:
@@ -518,7 +555,13 @@ def resolve_target(target: str) -> tuple[Rule, dict[str, Any]]:
     raise RuntimeError(f"No rule to build target {target!r}")
 
 
-def build(target: OutPath, _seen: set[str] | None = None, **kwargs):
+def build(
+    target: OutPath,
+    _seen: set[str] | None = None,
+    *,
+    session: Session | None = None,
+    **kwargs,
+):
     """Recursively build a target and its prerequisites.
 
     Args:
@@ -532,15 +575,16 @@ def build(target: OutPath, _seen: set[str] | None = None, **kwargs):
         _seen = set()
 
     target_str = str(target)
+    sess = _get_session(session)
     if target_str in _seen:
         raise RuntimeError(f"Cycle in build graph at {target_str!r}")
     _seen.add(target_str)
 
     if top_level:
-        start_prov_buffer()
+        start_prov_buffer(session=sess)
 
     try:
-        rule_obj, params = resolve_target(target_str)
+        rule_obj, params = resolve_target(target_str, session=sess)
 
         dep_paths = list(rule_obj.deps)
         for tmpl in rule_obj.dep_templates:
@@ -548,24 +592,25 @@ def build(target: OutPath, _seen: set[str] | None = None, **kwargs):
 
         for dep in dep_paths:
             try:
-                resolve_target(dep)
+                resolve_target(dep, session=sess)
             except RuntimeError:
                 continue
-            build(dep, _seen)
+            build(dep, _seen, session=sess)
 
         rule_obj.func(**params)
     finally:
         if top_level:
-            flush_prov_buffer(**kwargs)
+            flush_prov_buffer(session=sess, **kwargs)
 
 
-def plan(target: str) -> list[tuple[str, Rule, dict[str, Any]]]:
+def plan(target: str, *, session: Session | None = None) -> list[tuple[str, Rule, dict[str, Any]]]:
     """Return the execution order for building a target.
 
     The plan is derived using :func:`resolve_target` for each dependency,
     ensuring concrete and templated rules are treated uniformly.
     """
 
+    sess = _get_session(session)
     seen_targets: set[str] = set()
     visiting: set[str] = set()
     order: list[tuple[str, Rule, dict[str, Any]]] = []
@@ -577,14 +622,14 @@ def plan(target: str) -> list[tuple[str, Rule, dict[str, Any]]]:
             raise RuntimeError(f"Cycle in build graph at {t!r}")
         visiting.add(t)
 
-        rule_obj, params = resolve_target(t)
+        rule_obj, params = resolve_target(t, session=sess)
         dep_paths = list(rule_obj.deps)
         for tmpl in rule_obj.dep_templates:
             dep_paths.append(tmpl.format(**params))
 
         for d in dep_paths:
             try:
-                resolve_target(d)
+                resolve_target(d, session=sess)
             except RuntimeError:
                 continue
             dfs(d)
@@ -597,27 +642,29 @@ def plan(target: str) -> list[tuple[str, Rule, dict[str, Any]]]:
     return order
 
 
-def explain(target: str) -> None:
+def explain(target: str, *, session: Session | None = None) -> None:
     """Log the rule used for each target in build order."""
 
-    for tgt, rule_obj, _ in plan(target):
+    for tgt, rule_obj, _ in plan(target, session=session):
         logging.info("target %s via rule %s", tgt, rule_obj.name)
 
 
-def to_dot(target: str) -> str:
+def to_dot(target: str, *, session: Session | None = None) -> str:
     """Render the dependency graph for ``target`` in DOT format."""
 
     edges: list[str] = []
     seen: set[tuple[str, str]] = set()
 
-    for tgt, rule_obj, params in plan(target):
+    sess = _get_session(session)
+
+    for tgt, rule_obj, params in plan(target, session=sess):
         dep_paths = list(rule_obj.deps)
         for tmpl in rule_obj.dep_templates:
             dep_paths.append(tmpl.format(**params))
 
         for dep in dep_paths:
             try:
-                resolve_target(dep)
+                resolve_target(dep, session=sess)
             except RuntimeError:
                 continue
             if (dep, rule_obj.name) not in seen:
@@ -636,37 +683,39 @@ def to_dot(target: str) -> str:
     return "digraph workflow {\n  " + "\n  ".join(edges) + "\n}"
 
 
-def list_rules() -> list[str]:
+def list_rules(*, session: Session | None = None) -> list[str]:
     """Return registered rule names in alphabetical order."""
 
-    return sorted(RULES_BY_NAME.keys())
+    return sorted(_get_session(session).rules_by_name.keys())
 
 
-def list_targets() -> list[str]:
+def list_targets(*, session: Session | None = None) -> list[str]:
     """Return concrete targets produced by non-pattern rules."""
 
-    return sorted(RULES_BY_TARGET.keys())
+    return sorted(_get_session(session).rules_by_target.keys())
 
 
-def root_targets() -> list[str]:
+def root_targets(*, session: Session | None = None) -> list[str]:
     """Return concrete targets that are not dependencies of other rules."""
 
-    concrete = set(RULES_BY_TARGET.keys())
+    sess = _get_session(session)
+    concrete = set(sess.rules_by_target.keys())
     deps: set[str] = set()
-    for rule_obj in RULES_BY_TARGET.values():
+    for rule_obj in sess.rules_by_target.values():
         deps |= set(rule_obj.deps)
     return sorted(concrete - deps)
 
 
-def dry_run_build(target: str) -> None:
+def dry_run_build(target: str, *, session: Session | None = None) -> None:
     """Log the steps required to build ``target`` without executing rules."""
 
-    for tgt, rule_obj, _ in plan(target):
+    for tgt, rule_obj, _ in plan(target, session=session):
         logging.info("would run rule %s for target %s", rule_obj.name, tgt)
 
 
-def build_all():
+def build_all(*, session: Session | None = None):
     """Build all concrete targets that have no dependents."""
 
-    for target in root_targets():
-        build(target)
+    sess = _get_session(session)
+    for target in root_targets(session=sess):
+        build(target, session=sess)

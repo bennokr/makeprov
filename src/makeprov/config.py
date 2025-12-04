@@ -1,8 +1,11 @@
 from __future__ import annotations
-from dataclasses import dataclass, fields, is_dataclass
-from typing import Literal
+from dataclasses import dataclass, fields, is_dataclass, replace
+from typing import Literal, TYPE_CHECKING
 import sys, logging, tomllib as toml, defopt
 import argparse
+
+if TYPE_CHECKING:
+    from .core import Session
 
 ProvFormat = Literal["json", "trig"]
 Frame = Literal["provenance", "results"]
@@ -25,14 +28,6 @@ class ProvenanceConfig:
             trig named graph. Options: `"provenance"` or `"results"`.
         context: Whether JSON-LD outputs include the context inline.
 
-    Examples:
-        .. code-block:: python
-
-            from makeprov import ProvenanceConfig, GLOBAL_CONFIG
-
-            GLOBAL_CONFIG = ProvenanceConfig(
-                prov_dir="artifacts/prov", out_fmt="trig"
-            )
     """
 
     base_iri: str | None = None
@@ -46,7 +41,53 @@ class ProvenanceConfig:
     frame: Frame = "provenance"
 
 
-GLOBAL_CONFIG = ProvenanceConfig()
+_GLOBAL_CONFIG = ProvenanceConfig()
+
+
+def get_config() -> ProvenanceConfig:
+    """Return the process-wide provenance configuration instance."""
+
+    return _GLOBAL_CONFIG
+
+
+def set_config(config: ProvenanceConfig) -> ProvenanceConfig:
+    """Replace the process-wide configuration values in place.
+
+    The global instance is not rebound; instead, its fields are updated from the
+    provided ``config`` object. This ensures existing imports continue to see
+    the current configuration values without requiring callers to re-import a
+    module attribute.
+
+    Args:
+        config: Configuration values to copy onto the global instance.
+
+    Returns:
+        ProvenanceConfig: The updated global configuration instance.
+    """
+
+    for f in fields(_GLOBAL_CONFIG):
+        setattr(_GLOBAL_CONFIG, f.name, getattr(config, f.name))
+    return _GLOBAL_CONFIG
+
+
+def update_config(**kwargs) -> ProvenanceConfig:
+    """Update selected configuration fields on the global instance.
+
+    Args:
+        **kwargs: Field names and values to apply. Unknown fields raise
+            :class:`TypeError` via :func:`dataclasses.replace`.
+
+    Returns:
+        ProvenanceConfig: The updated global configuration instance.
+    """
+
+    new_config = replace(_GLOBAL_CONFIG, **kwargs)
+    return set_config(new_config)
+
+
+# Backwards compatibility: modules may still import GLOBAL_CONFIG directly. The
+# object remains stable because ``set_config`` mutates it in place.
+GLOBAL_CONFIG = _GLOBAL_CONFIG
 
 
 def apply_config(conf_obj, toml_ref):
@@ -88,7 +129,14 @@ def apply_config(conf_obj, toml_ref):
     set_conf(conf_obj, param)
 
 
-def main(subcommands=None, conf_obj=None, argparse_kwargs={}, **kwargs):
+def main(
+    subcommands=None,
+    conf_obj=None,
+    argparse_kwargs={},
+    *,
+    session: "Session" | None = None,
+    **kwargs,
+):
     """Entry point for running registered CLI subcommands.
 
     Args:
@@ -97,6 +145,8 @@ def main(subcommands=None, conf_obj=None, argparse_kwargs={}, **kwargs):
             registered commands.
         conf_obj (ProvenanceConfig | None): Configuration to update from command
             line flags; defaults to :data:`GLOBAL_CONFIG`.
+        session (Session | None): Registry and buffer container to use instead
+            of the process-wide default session.
 
     Examples:
         Expose decorated rules as CLI commands and honor configuration flags:
@@ -106,13 +156,12 @@ def main(subcommands=None, conf_obj=None, argparse_kwargs={}, **kwargs):
             python -m makeprov --conf @config/provenance.toml --verbose my_rule arg1
     """
 
-    from .core import COMMANDS, flush_prov_buffer, start_prov_buffer
-    from .core import build, build_all, explain, to_dot
+    from .core import COMMANDS, Session as CoreSession, _get_session
+    from .core import build, build_all, explain, flush_prov_buffer, start_prov_buffer, to_dot
 
-    global GLOBAL_CONFIG
-
-    subcommands = subcommands or COMMANDS
-    conf_obj = conf_obj or GLOBAL_CONFIG
+    sess: CoreSession = _get_session(session)
+    subcommands = subcommands or sess.commands
+    conf_obj = conf_obj or get_config()
 
     parent = argparse.ArgumentParser(add_help=False)
     parent.add_argument(
@@ -154,24 +203,24 @@ def main(subcommands=None, conf_obj=None, argparse_kwargs={}, **kwargs):
         return ns
 
     apply_globals(sys.argv[1:])  # apply effects early
-    logging.debug(f"Config: {GLOBAL_CONFIG}")
+    logging.debug(f"Config: {get_config()}")
     try:
         early_ns = parent.parse_known_args(sys.argv[1:])[0]
         if early_ns.build_all:
-            build_all()
+            build_all(session=sess)
             return
         if early_ns.build:
-            build(early_ns.build)
+            build(early_ns.build, session=sess)
             return
         if early_ns.explain:
-            explain(early_ns.explain)
+            explain(early_ns.explain, session=sess)
             return
         if early_ns.to_dot:
-            print(to_dot(early_ns.to_dot))
+            print(to_dot(early_ns.to_dot, session=sess))
             return
 
-        if GLOBAL_CONFIG.merge:
-            start_prov_buffer()
+        if conf_obj.merge:
+            start_prov_buffer(session=sess)
         defopt.run(
             subcommands,
             argv=sys.argv[1:],
@@ -179,5 +228,5 @@ def main(subcommands=None, conf_obj=None, argparse_kwargs={}, **kwargs):
             **kwargs
         )
     finally:
-        if GLOBAL_CONFIG.merge:
-            flush_prov_buffer()
+        if conf_obj.merge:
+            flush_prov_buffer(session=sess)

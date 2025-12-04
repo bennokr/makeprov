@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .config import GLOBAL_CONFIG, ProvenanceConfig, apply_config
+from .config import GLOBAL_CONFIG, ProvenanceConfig, apply_config, get_config
 from .prov import (
     COMMON_CONTEXT,
     ActivityNode,
@@ -403,7 +403,7 @@ def main(argv: list[str] | None = None) -> int:
 
     namespace = parser.parse_args(argv)
 
-    cfg = ProvenanceConfig(**vars(GLOBAL_CONFIG))
+    cfg = ProvenanceConfig(**vars(get_config()))
     for toml_ref in namespace.conf:
         apply_config(cfg, toml_ref)
 

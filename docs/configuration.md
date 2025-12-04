@@ -1,8 +1,10 @@
 # Configuration
 
-`makeprov` reads settings from {data}`makeprov.config.GLOBAL_CONFIG` and allows
-runtime overrides via the command line. This page summarizes the available
-options and demonstrates common configurations.
+`makeprov` reads settings from a process-wide configuration instance returned by
+{func}`makeprov.config.get_config` (also available as
+{data}`makeprov.config.GLOBAL_CONFIG` for compatibility) and allows runtime
+overrides via the command line. This page summarizes the available options and
+demonstrates common configurations.
 
 ## Available options
 
@@ -27,13 +29,38 @@ python -m makeprov --conf '{prov_dir="artifacts/prov"}' my_rule
 python -m makeprov --conf @config/provenance.toml --conf '{out_fmt="trig"}' my_rule
 ```
 
-You can also update the configuration programmatically:
+You can also update the configuration programmatically without rebinding the
+global reference:
 
 ```python
-from makeprov.config import GLOBAL_CONFIG, apply_config
+from makeprov import get_config, update_config
+from makeprov.config import apply_config
 
-apply_config(GLOBAL_CONFIG, '{force=true, out_fmt="trig"}')
+cfg = get_config()
+apply_config(cfg, '{force=true, out_fmt="trig"}')
+update_config(prov_dir="artifacts/prov")
 ```
+
+## Isolating state with sessions
+
+Rule registries and provenance buffers live in a :class:`~makeprov.core.Session`
+object. ``makeprov`` creates a default session for convenience, but you can
+instantiate your own to keep multiple runs from sharing state:
+
+```python
+from makeprov import OutPath, build, new_session, rule
+
+session = new_session()
+
+@rule(session=session)
+def generate(out: OutPath = OutPath("data/output.txt")):
+    out.write_text("content")
+
+build("data/output.txt", session=session)
+```
+
+Pass the same ``session`` to CLI entrypoints via
+{func}`makeprov.config.main` to ensure commands and buffers remain isolated.
 
 ## Inspecting dependency graphs
 
