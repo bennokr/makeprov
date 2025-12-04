@@ -42,9 +42,13 @@ print(output)
 ## Environment capture
 
 If the calling project is installed as a Python distribution, the library
-captures the package name, version, and dependencies as part of the provenance.
-This information is attached as a collection entity linked to the generating
-activity.
+captures the package name, version, and dependencies as part of the
+provenance. This information is attached as a collection entity linked to the
+generating activity. The environment identifier is derived from a hash of the
+package metadata (name, version, dependencies) rather than the run timestamp,
+so multiple runs with the same environment share a stable ``env-<hash>`` IRI.
+When provenance documents are merged, the environment entity is deduplicated so
+only one copy is emitted in the combined graph.
 
 ## Result graphs
 

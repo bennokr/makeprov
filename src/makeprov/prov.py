@@ -367,7 +367,7 @@ class Prov:
         activity_id = _file_iri(f"{script.name}#{name}-{run_id}")
         agent_id = _file_iri(script.name)
         graph_id = _iri(f"graph-{name}")
-        env_id = _iri(f"env-{run_id}")
+        env_id: str | None = None
 
         activity_used = []
 
@@ -439,15 +439,25 @@ class Prov:
         pname, version, deps_specs = project_metadata()
         if any([pname, version, deps_specs]):
             reqs: list["DepNode"] = []
+            normalized_specs: list[str] = []
             for spec in deps_specs:
                 spec_str = spec.strip().split(";")[0]
                 if not spec_str:
                     continue
+                normalized_specs.append(spec_str)
                 pkg = spec_str.split()[0]
                 pkg_name = re.split(r"[<>=!~ ]", pkg, 1)[0]
                 norm = pep503_normalize(pkg_name)
                 dep_iri = f"https://pypi.org/project/{norm}/"
                 reqs.append(DepNode(id=dep_iri, type="schema:SoftwareSourceCode", label=spec_str))
+
+            env_signature = {
+                "name": pname or "",
+                "version": version or "",
+                "deps": sorted(normalized_specs),
+            }
+            env_hash = hashlib.sha256(json.dumps(env_signature, sort_keys=True).encode()).hexdigest()[:12]
+            env_id = _iri(f"env-{env_hash}")
             env_node = _apply_context(EnvNode(
                 id=env_id,
                 type=("prov:Entity", "prov:Collection"),
@@ -457,7 +467,8 @@ class Prov:
                 requires=tuple(reqs) or None,
             ))
             # Link activity -> env via prov:used
-            activity_used.append(env_id)
+            if env_id:
+                activity_used.append(env_id)
 
         # Activity
         activity = _apply_context(ActivityNode(
@@ -500,10 +511,16 @@ class Prov:
                 merged = Prov.merge([prov_a, prov_b])
         """
         base_iri, name, all_provenance, all_results = None, None, [], []
+        env_ids: set[str] = set()
         for prov in provs:
             base_iri = prov.base_iri
             name = prov.name
-            all_provenance.extend(prov.provenance)
+            for node in prov.provenance:
+                if isinstance(node, EnvNode):
+                    if node.id in env_ids:
+                        continue
+                    env_ids.add(node.id)
+                all_provenance.append(node)
             all_results.extend(prov.results)
         merged_context = deepcopy(provs[0].context) if provs else deepcopy(COMMON_CONTEXT)
         return cls(base_iri, name, all_provenance, all_results, merged_context)
