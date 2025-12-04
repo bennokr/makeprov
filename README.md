@@ -55,25 +55,25 @@ if __name__ == '__main__':
     defopt.run(process_data)
 ```
 
-You can execute `example.py` via the CLI like so:
+You can execute `examples/example.py` via the CLI like so:
 
 ```bash
-python example.py build-all
+python examples/example.py build-all
 
 # Or set configuration through the CLI
-python example.py build-all --conf='{"base_iri": "http://mybaseiri.org/", "prov_dir": "my_prov_directory"}' --force --input_file input.txt --output_file final_output.txt
+python examples/example.py build-all --conf='{"base_iri": "http://mybaseiri.org/", "prov_dir": "my_prov_directory"}' --force --input_file input.txt --output_file final_output.txt
 
 # Or set configuration through a TOML file
-python example.py build-all -c @my_config.toml
+python examples/example.py build-all -c @my_config.toml
 
 # Inspect dependency resolution without executing rules
-python example.py --explain results/1.txt
-python example.py --to-dot results/1.txt
+python examples/example.py --explain results/1.txt
+python examples/example.py --to-dot results/1.txt
 ```
 
 ### Complex CSV-to-RDF Workflow
 
-For a more involved scenario, see [`complex_example.py`](complex_example.py). It creates multiple CSV files, aggregates their contents, and emits an RDF graph that is both serialized to disk and embedded into the provenance dataset because the function returns an `rdflib.Graph`.
+For a more involved scenario, see [`examples/complex_example.py`](examples/complex_example.py). It creates multiple CSV files, aggregates their contents, and emits an RDF graph that is both serialized to disk and embedded into the provenance dataset because the function returns an `rdflib.Graph`.
 
 ```python
 @rule()
@@ -103,7 +103,7 @@ def export_totals_graph(
 Run the entire workflow, including CSV generation and RDF export, with:
 
 ```bash
-python complex_example.py build-sales-report
+python examples/complex_example.py build-sales-report
 ```
 
 ### Bundling nested provenance and directory outputs
@@ -113,7 +113,17 @@ Rules can merge the provenance from any rules they invoke by passing
 `makeprov.OutDir` to declare a directory and then materialize multiple
 outputs beneath it while keeping them linked to a single provenance record. Use
 `makeprov.InDir` for the same tracked-directory semantics on inputs.
-See [`merge_outdir_example.py`](merge_outdir_example.py) for an example.
+See [`examples/merge_outdir_example.py`](examples/merge_outdir_example.py) for an example.
+
+### Configured context and isolated sessions
+
+`examples/context_demo_example.py` demonstrates pinning a base IRI, writing
+provenance to a dedicated directory, and running rules inside an isolated
+session so registries and buffers do not leak across runs:
+
+```bash
+python examples/context_demo_example.py build-all
+```
 
 ### Snakemake workflows
 

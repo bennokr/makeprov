@@ -51,6 +51,16 @@ rules never emit their own documents. Any per-rule ``prov_path`` is ignored
 while a workflow buffer is active; set ``merge=false`` to force a rule to write
 its own provenance file immediately.
 
+## Context isolation
+
+The JSON-LD context in ``makeprov`` is treated as an immutable template. Each
+call to {class}`makeprov.prov.Prov.create` copies the common context and applies
+repository-specific defaults (such as ``@base`` and ``blob`` IRIs discovered
+from git) to the copy instead of mutating shared globals. This guarantees that
+one workflow run cannot leak context updates into another. Use
+{func}`makeprov.config.update_config` to set a ``base_iri`` for identifiers
+without worrying about cross-run side effects.
+
 ## Isolating state with sessions
 
 Rule registries and provenance buffers live in a :class:`~makeprov.core.Session`

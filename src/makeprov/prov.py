@@ -6,6 +6,7 @@ import logging
 import mimetypes
 import re
 import subprocess
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -282,6 +283,7 @@ class Prov:
     name: str
     provenance: list[RDFMixin]
     results: tuple[GraphEntity, list[RDFMixin]]
+    context: dict = field(default_factory=lambda: deepcopy(COMMON_CONTEXT))
 
     @classmethod
     def create(
@@ -337,13 +339,21 @@ class Prov:
         commit = _safe_cmd(["git", "rev-parse", "HEAD"])
         origin = _safe_cmd(["git", "config", "--get", "remote.origin.url"])
 
+        context = deepcopy(COMMON_CONTEXT)
+
+        def _apply_context(node: RDFMixin):
+            node.__context__ = context
+            if hasattr(node, "_build_aliases"):
+                node._build_aliases()
+            return node
+
         # Default Github URL heuristic
         if not base_iri and origin and "github.com" in origin:
             branch = _safe_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"])
             base_iri = origin.replace(".git", "")
 
-            COMMON_CONTEXT["@base"] = f"{base_iri}#"
-            COMMON_CONTEXT["blob"] = f"{base_iri}/blob/{branch}/"
+            context["@base"] = f"{base_iri}#"
+            context["blob"] = f"{base_iri}/blob/{branch}/"
 
             def _iri(tail: str) -> str:
                 return tail # only suffix, put @base in context
@@ -359,22 +369,22 @@ class Prov:
         activity_used = []
 
         # Agent
-        agent = AgentNode(
+        agent = _apply_context(AgentNode(
             id=agent_id,
             type=("prov:Agent", "prov:SoftwareAgent", "schema:SoftwareSourceCode"),
             label=script.name,
             hasVersion=commit or None,
             source=origin if origin else None,
-        )
+        ))
 
         # Graph entity (metadata entry)
-        results_graph = GraphEntity(
+        results_graph = _apply_context(GraphEntity(
             id=graph_id,
             type="prov:Entity",
             wasGeneratedBy=activity_id,
             wasAttributedTo=agent_id,
             generatedAtTime=t1,
-        )
+        ))
 
         # Inputs
         input_nodes: list[FileEntity] = []
@@ -384,15 +394,17 @@ class Prov:
             info = _path_info(p)
             fid = _file_iri(p)
             input_nodes.append(
-                FileEntity(
-                    id=fid,
-                    type="prov:Entity",
-                    format=info["format"],
-                    extent=info["size"],
-                    modified=info["modified"] if info.get("modified") else None,
-                    identifier=f"sha256:{info['sha256']}"
-                    if info.get("sha256")
-                    else None,
+                _apply_context(
+                    FileEntity(
+                        id=fid,
+                        type="prov:Entity",
+                        format=info["format"],
+                        extent=info["size"],
+                        modified=info["modified"] if info.get("modified") else None,
+                        identifier=f"sha256:{info['sha256']}"
+                        if info.get("sha256")
+                        else None,
+                    )
                 )
             )
 
@@ -407,13 +419,15 @@ class Prov:
             info = _path_info(p)
             oid = _file_iri(p)
             output_nodes.append(
-                FileEntity(
-                    id=oid,
-                    type="prov:Entity",
-                    format=info["format"],
-                    extent=info["size"],
-                    modified=info["modified"] if info.get("modified") else None,
-                    wasGeneratedBy=activity_id,
+                _apply_context(
+                    FileEntity(
+                        id=oid,
+                        type="prov:Entity",
+                        format=info["format"],
+                        extent=info["size"],
+                        modified=info["modified"] if info.get("modified") else None,
+                        wasGeneratedBy=activity_id,
+                    )
                 )
             )
 
@@ -431,19 +445,19 @@ class Prov:
                 norm = pep503_normalize(pkg_name)
                 dep_iri = f"https://pypi.org/project/{norm}/"
                 reqs.append(DepNode(id=dep_iri, type="schema:SoftwareSourceCode", label=spec_str))
-            env_node = EnvNode(
+            env_node = _apply_context(EnvNode(
                 id=env_id,
                 type=("prov:Entity", "prov:Collection"),
                 label="Python environment",
                 title=pname or None,
                 hasVersion=version or None,
                 requires=tuple(reqs) or None,
-            )
+            ))
             # Link activity -> env via prov:used
             activity_used.append(env_id)
 
         # Activity
-        activity = ActivityNode(
+        activity = _apply_context(ActivityNode(
             id=activity_id,
             type="prov:Activity",
             startedAtTime=t0,
@@ -451,7 +465,7 @@ class Prov:
             wasAssociatedWith=agent_id,
             comment=("task failed" if not success else None),
             used=tuple(activity_used),
-        )
+        ))
 
         return cls(
             base_iri=base_iri,
@@ -463,6 +477,7 @@ class Prov:
                 *([env_node] if env_node else []),
             ],
             results=[(results_graph, results)] if results is not None else [],
+            context=context,
         )
 
     @classmethod
@@ -487,7 +502,8 @@ class Prov:
             name = prov.name
             all_provenance.extend(prov.provenance)
             all_results.extend(prov.results)
-        return cls(base_iri, name, all_provenance, all_results)
+        merged_context = deepcopy(provs[0].context) if provs else deepcopy(COMMON_CONTEXT)
+        return cls(base_iri, name, all_provenance, all_results, merged_context)
 
     def _iri(self, tail: str) -> str:
         return f"{_base(self.base_iri)}{tail}"
@@ -519,6 +535,8 @@ class Prov:
 
     def to_jsonld(self, frame: Frame = "provenance", with_context: bool = False) -> dict:
         doc = ProvDoc(provenance=tuple(set(self.provenance)))
+        doc.__context__ = self.context
+        doc._build_aliases()
         data = doc.to_jsonld(with_context=with_context)
 
         provenance_entries = list(data.pop("provenance", []))
@@ -558,7 +576,10 @@ class Prov:
         if frame == "results":
             prov_graph_target = ds.get_context(self._iri(f"prov-{self.name}"))
 
-        for triple in ProvDoc(provenance=tuple(set(self.provenance))).to_graph():
+        doc = ProvDoc(provenance=tuple(set(self.provenance)))
+        doc.__context__ = self.context
+        doc._build_aliases()
+        for triple in doc.to_graph():
             prov_graph_target.add(triple)
 
         for result_graph, results in self.results:
