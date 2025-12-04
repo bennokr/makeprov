@@ -14,7 +14,7 @@ demonstrates common configurations.
 | `prov_dir` | Directory where provenance documents are written when no explicit path is set. |
 | `prov_path` | Explicit path to the provenance document; overrides `prov_dir`. |
 | `force` | When true, run rules regardless of timestamp checks. |
-| `merge` | When true, merge provenance from multiple rules into a single document. |
+| `merge` | When true, collect provenance in a workflow-level buffer and emit a single document at the end of the run. |
 | `dry_run` | Log actions without running rule bodies. |
 | `out_fmt` | Output format: `"json"` for JSON-LD or `"trig"` for RDF TriG. |
 | `context` | Embed JSON-LD context in output documents. |
@@ -40,6 +40,16 @@ cfg = get_config()
 apply_config(cfg, '{force=true, out_fmt="trig"}')
 update_config(prov_dir="artifacts/prov")
 ```
+
+## Merge semantics
+
+When ``merge`` is true (the default), ``makeprov`` opens a single provenance
+buffer for the workflow run and appends provenance from every rule to that
+buffer. The buffer is flushed once at the end of the run (by the CLI entrypoint
+or the top-level call to {func}`makeprov.core.build`), ensuring that nested
+rules never emit their own documents. Any per-rule ``prov_path`` is ignored
+while a workflow buffer is active; set ``merge=false`` to force a rule to write
+its own provenance file immediately.
 
 ## Isolating state with sessions
 

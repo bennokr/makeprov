@@ -86,10 +86,10 @@ def _current_prov_buffer(session: Session | None = None) -> list[Prov] | None:
 def start_prov_buffer(*, session: Session | None = None) -> None:
     """Create a provenance buffer to batch writes.
 
-    This function can be called multiple times to form a stack of provenance
-    buffers. Nested buffers allow a rule decorated with ``merge=True`` to
-    accumulate provenance from any rules it invokes and then merge that
-    provenance into a single document.
+    Buffers capture provenance from multiple rule invocations and emit a single
+    merged document when flushed. Callers should prefer one top-level buffer per
+    workflow run; nested buffers are supported for backward compatibility but
+    are avoided by the public APIs to keep merge semantics predictable.
     """
 
     _get_session(session).prov_buffers.append([])
@@ -428,7 +428,7 @@ def rule(
                 return None
 
             buffer_started = False
-            if rule_config.merge:
+            if rule_config.merge and _current_prov_buffer(sess) is None:
                 start_prov_buffer(session=sess)
                 buffer_started = True
 
@@ -580,8 +580,10 @@ def build(
         raise RuntimeError(f"Cycle in build graph at {target_str!r}")
     _seen.add(target_str)
 
-    if top_level:
+    buffer_started = False
+    if top_level and get_config().merge and _current_prov_buffer(sess) is None:
         start_prov_buffer(session=sess)
+        buffer_started = True
 
     try:
         rule_obj, params = resolve_target(target_str, session=sess)
@@ -599,7 +601,7 @@ def build(
 
         rule_obj.func(**params)
     finally:
-        if top_level:
+        if top_level and buffer_started:
             flush_prov_buffer(session=sess, **kwargs)
 
 

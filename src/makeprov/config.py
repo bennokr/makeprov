@@ -204,6 +204,7 @@ def main(
 
     apply_globals(sys.argv[1:])  # apply effects early
     logging.debug(f"Config: {get_config()}")
+    buffer_started = False
     try:
         early_ns = parent.parse_known_args(sys.argv[1:])[0]
         if early_ns.build_all:
@@ -219,8 +220,9 @@ def main(
             print(to_dot(early_ns.to_dot, session=sess))
             return
 
-        if conf_obj.merge:
+        if conf_obj.merge and not sess.prov_buffers:
             start_prov_buffer(session=sess)
+            buffer_started = True
         defopt.run(
             subcommands,
             argv=sys.argv[1:],
@@ -228,5 +230,5 @@ def main(
             **kwargs
         )
     finally:
-        if conf_obj.merge:
+        if conf_obj.merge and buffer_started:
             flush_prov_buffer(session=sess)
