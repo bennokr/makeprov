@@ -21,6 +21,13 @@ graph data.
 }
 ```
 
+Relationship fields (for example ``wasGeneratedBy`` or ``wasAssociatedWith``)
+accept either full provenance nodes or JSON-LD references in ``{"@id": ...}``
+form. This allows callers to mix embedded entities with references to
+external/previously declared ones when constructing or deserializing
+{class}`~makeprov.prov.ActivityNode`, {class}`~makeprov.prov.GraphEntity`, and
+{class}`~makeprov.prov.FileEntity` instances.
+
 ## TriG datasets
 
 TriG output writes a dataset that combines the default graph for provenance with

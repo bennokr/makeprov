@@ -10,7 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, TypeAlias
 
 from .rdfmixin import RDFMixin
 from .config import Frame
@@ -55,6 +55,9 @@ COMMON_CONTEXT = {
 }
 
 
+JSONLDRef: TypeAlias = str | dict[str, Any]
+
+
 @dataclass(unsafe_hash=True)
 class BaseNode(RDFMixin):
     id: str
@@ -66,8 +69,8 @@ class BaseNode(RDFMixin):
 class ActivityNode(BaseNode):
     startedAtTime: datetime | None = None
     endedAtTime: datetime | None = None
-    wasAssociatedWith: AgentNode | None = None
-    used: tuple[FileEntity] | None = None
+    wasAssociatedWith: AgentNode | JSONLDRef | None = None
+    used: tuple[FileEntity | JSONLDRef] | None = None
     comment: Optional[str] = None
 
 
@@ -80,8 +83,8 @@ class AgentNode(BaseNode):
 
 @dataclass(unsafe_hash=True)
 class GraphEntity(BaseNode):
-    wasGeneratedBy: ActivityNode | None = None
-    wasAttributedTo: AgentNode | None = None
+    wasGeneratedBy: ActivityNode | JSONLDRef | None = None
+    wasAttributedTo: AgentNode | JSONLDRef | None = None
     generatedAtTime: datetime | None = None
 
 
@@ -91,7 +94,7 @@ class FileEntity(BaseNode):
     extent: int | None = None
     modified: datetime | None = None
     identifier: str | None = None
-    wasGeneratedBy: ActivityNode | None = None
+    wasGeneratedBy: ActivityNode | JSONLDRef | None = None
 
 
 @dataclass(unsafe_hash=True)

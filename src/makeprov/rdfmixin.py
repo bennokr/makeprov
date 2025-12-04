@@ -4,6 +4,7 @@ from datetime import datetime, date, time
 from decimal import Decimal
 from uuid import UUID
 import logging
+import types
 
 
 class RDFMixin:
@@ -246,13 +247,29 @@ class RDFMixin:
         def dec(value, ftype, *, field_name=None):
             origin = get_origin(ftype)
 
-            if origin is Union:
+            if origin in (Union, types.UnionType):
                 args = get_args(ftype)
                 non_none = [a for a in args if a is not type(None)]
+                if value is None and len(non_none) != len(args):
+                    return None
+
+                if isinstance(value, dict) and set(value.keys()) == {"@id"}:
+                    return value
+
+                for opt in non_none:
+                    opt_origin = get_origin(opt)
+                    target = opt_origin or opt
+                    if (
+                        isinstance(target, type)
+                        and is_dataclass(target)
+                        and issubclass(target, RDFMixin)
+                        and isinstance(value, dict)
+                    ):
+                        return target.from_jsonld(value)
+
                 if len(non_none) == 1:
-                    if value is None:
-                        return None
                     return dec(value, non_none[0], field_name=field_name)
+
                 return value  # fallback for complex unions
 
             if origin in (list, tuple):
