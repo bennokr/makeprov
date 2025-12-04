@@ -29,7 +29,7 @@ def build_minimal_prov_graph() -> rdflib.Graph:
     src = BASE["src/input.txt"]
     out = BASE["out/output.txt"]
     graph_ent = BASE[f"graph/{name}"]
-    env = BASE[f"env/{run_id}"]
+    env = BASE["env-abc123"]
     dep = rdflib.URIRef("https://pypi.org/project/rdflib/")
     rdf_resource = rdflib.URIRef("http://www.w3.org/1999/02/22-rdf-syntax-ns#Resource")
 

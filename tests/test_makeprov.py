@@ -7,16 +7,22 @@ from rdflib import Dataset, Graph, Literal, Namespace
 from rdflib.namespace import RDF, XSD
 
 from makeprov import (
+    GLOBAL_CONFIG,
     InDir,
     InPath,
     OutDir,
     OutPath,
     ProvenanceConfig,
     build,
+    get_config,
+    list_rules,
     list_targets,
     main,
     plan,
     rule,
+    new_session,
+    set_config,
+    update_config,
 )
 from makeprov.prov import Prov
 
@@ -69,6 +75,59 @@ def test_process_data(tmp_path):
     # Check that the output file was created and contains the correct data
     assert output_file.exists()
     assert output_file.read_text() == "Hello, world!"
+
+
+def test_config_manager_preserves_singleton():
+    original = get_config()
+    backup = ProvenanceConfig(**vars(original))
+
+    try:
+        new_cfg = ProvenanceConfig(prov_dir="custom", merge=False, out_fmt="trig")
+        updated = set_config(new_cfg)
+
+        assert updated is original
+        assert GLOBAL_CONFIG is original
+        assert get_config().prov_dir == "custom"
+        assert not get_config().merge
+
+        update_config(prov_dir="next", context=True)
+        assert get_config().prov_dir == "next"
+        assert GLOBAL_CONFIG.context is True
+    finally:
+        set_config(backup)
+
+
+def test_sessions_isolate_registries(tmp_path):
+    session_one = new_session()
+    session_two = new_session()
+    cfg = ProvenanceConfig(prov_dir=str(tmp_path / "prov"))
+
+    @rule(
+        name="isolated_one",
+        config=cfg,
+        session=session_one,
+    )
+    def isolated_one(out: OutPath = OutPath(tmp_path / "one.txt")):
+        out.write_text("one")
+
+    @rule(
+        name="isolated_two",
+        config=cfg,
+        session=session_two,
+    )
+    def isolated_two(out: OutPath = OutPath(tmp_path / "two.txt")):
+        out.write_text("two")
+
+    assert "isolated_one" in list_rules(session=session_one)
+    assert "isolated_two" in list_rules(session=session_two)
+    assert "isolated_one" not in list_rules(session=session_two)
+    assert "isolated_two" not in list_rules(session=session_one)
+
+    build(str(tmp_path / "one.txt"), session=session_one)
+    build(str(tmp_path / "two.txt"), session=session_two)
+
+    assert (tmp_path / "one.txt").read_text() == "one"
+    assert (tmp_path / "two.txt").read_text() == "two"
 
 
 def test_rule_returns_graph(tmp_path):
@@ -280,6 +339,24 @@ def test_rule_local_merge(monkeypatch, tmp_path):
     ]
 
     assert len(activities) == 2
+
+
+def test_workflow_merge_prefers_buffer_over_rule_paths(monkeypatch, tmp_path):
+    prov_dir = tmp_path / "prov"
+    explicit_rule_path = tmp_path / "per-rule.json"
+
+    config = ProvenanceConfig(prov_dir=str(prov_dir), merge=True)
+
+    @rule(name="buffered", config=config, prov_path=str(explicit_rule_path))
+    def buffered(out: OutPath = OutPath("buffered.txt")):
+        out.write_text("data")
+
+    monkeypatch.chdir(tmp_path)
+    build("buffered.txt")
+
+    assert not explicit_rule_path.exists()
+    prov_files = list(prov_dir.glob("*"))
+    assert len(prov_files) == 1
 
 
 def test_outdir_tracks_outputs(monkeypatch, tmp_path):
