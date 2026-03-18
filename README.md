@@ -115,6 +115,12 @@ outputs beneath it while keeping them linked to a single provenance record. Use
 `makeprov.InDir` for the same tracked-directory semantics on inputs.
 See [`examples/merge_outdir_example.py`](examples/merge_outdir_example.py) for an example.
 
+Merging is enabled by default: top-level runs start a provenance buffer and
+flush it once the CLI finishes, so downstream rules end up in one document
+unless you explicitly turn buffering off with `merge=False` on a rule or in the
+global config. Nested merges append to their parent buffer rather than writing
+multiple files.
+
 ### Configured context and isolated sessions
 
 `examples/context_demo_example.py` demonstrates pinning a base IRI, writing
@@ -167,6 +173,32 @@ You can customize the provenance tracking with the following options:
  - `prov_dir` (str): Directory for writing PROV `.json-ld` or `.trig` files
  - `force` (bool): Force running of dependencies
  - `dry_run` (bool): Only check workflow, don't run anything
+
+### Scoped spans and cached downloads
+
+Use `makeprov.span(label, prov_path=None, frame=None, context=None)` as a
+context manager or decorator to bracket a chunk of work in its own provenance
+buffer:
+
+```python
+from makeprov import span
+
+with span("model-run", prov_path="prov/models/model1"):
+    run_model()
+```
+
+For remote resources that are cached locally, wrap the path with
+`CachedDownload`. It will lazily fetch on first access and record the source
+URL (and optional headers) in the provenance:
+
+```python
+from makeprov import CachedDownload, rule
+
+@rule()
+def fetch_data(meta_json=CachedDownload("https://example.org/meta.json", "cache/meta.json")):
+    with meta_json.open() as handle:
+        return handle.read()
+```
 
 ## Documentation
 

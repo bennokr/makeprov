@@ -358,25 +358,32 @@ class Prov:
 
         # Inputs
         input_nodes: list[FileEntity] = []
+        from .paths import CachedDownload  # local import to avoid cycle
+
         for p in inputs:
             if not p.exists():
                 continue
             info = _path_info(p)
             fid = _file_iri(p)
-            input_nodes.append(
-                _apply_context(
-                    FileEntity(
-                        id=fid,
-                        type="prov:Entity",
-                        format=info["format"],
-                        extent=info["size"],
-                        modified=info["modified"] if info.get("modified") else None,
-                        identifier=f"sha256:{info['sha256']}"
-                        if info.get("sha256")
-                        else None,
-                    )
-                )
+            entity = FileEntity(
+                id=fid,
+                type="prov:Entity",
+                format=info["format"],
+                extent=info["size"],
+                modified=info["modified"] if info.get("modified") else None,
+                identifier=f"sha256:{info['sha256']}" if info.get("sha256") else None,
             )
+
+            if isinstance(p, CachedDownload):
+                extras: dict[str, Any] = {}
+                extras[p.transform] = p.url
+                extras.setdefault("rdfs:seeAlso", p.url)
+                if p.headers:
+                    extras["comment"] = f"download headers={p.headers}"
+                entity._extra = getattr(entity, "_extra", {})
+                entity._extra.update(extras)
+
+            input_nodes.append(_apply_context(entity))
 
         if input_nodes:
             activity_used = input_nodes

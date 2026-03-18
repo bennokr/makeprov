@@ -4,9 +4,56 @@ import os
 import sys
 from pathlib import Path
 
+import logging
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+
 # Platform-appropriate base class for Path subclassing
 _BasePath = type(Path())
 
+
+
+def download_file(url: str, dest_path: str, *, chunk_size: int = 8192, headers: dict | None = None) -> None:
+    """
+    Download a file via HTTP GET using urllib, streaming to disk with progress logging.
+    """
+    logger = logging.getLogger(__name__)
+    req = Request(url, headers=headers or {})
+
+    try:
+        with urlopen(req) as resp, open(dest_path, "wb") as out:
+            total = resp.getheader("Content-Length")
+            total = int(total) if total is not None else None
+
+            downloaded = 0
+            last_logged_pct = -1
+
+            logger.debug("Starting download: url=%s dest=%s total_bytes=%s",
+                         url, dest_path, total)
+
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+
+                out.write(chunk)
+                downloaded += len(chunk)
+
+                # Unknown total size: log every ~1MB
+                if downloaded // (1024 * 1024) != (downloaded - len(chunk)) // (1024 * 1024):
+                    logger.debug(
+                        "Download progress: url=%s %d bytes",
+                        url, downloaded
+                    )
+
+            logger.debug("Download complete: url=%s bytes=%d", url, downloaded)
+
+    except HTTPError as e:
+        logger.debug("HTTP error: url=%s code=%s", url, e.code)
+        raise
+    except URLError as e:
+        logger.debug("Connection error: url=%s reason=%s", url, e.reason)
+        raise
 
 class ProvPath(_BasePath):
     """Filesystem path with first-class support for stream placeholders.
@@ -111,6 +158,33 @@ class InPath(ProvPath):
             return sys.stdin.buffer if "b" in mode else sys.stdin
         return super().open(mode, *args, **kwargs)
 
+
+class CachedDownload(InPath):
+    """Input wrapper that lazily downloads and records source metadata."""
+
+    def __new__(cls, url: str, cache_path: str | os.PathLike[str], *, headers=None, transform: str | None = "prov:wasDerivedFrom"):
+        self = super().__new__(cls, cache_path)
+        return self
+
+    def __init__(
+        self,
+        url: str,
+        cache_path: str | os.PathLike[str],
+        *,
+        headers: dict | None = None,
+        transform: str | None = "prov:wasDerivedFrom",
+    ):
+        super().__init__()
+        self.url = url
+        self.headers = headers or {}
+        self.transform = transform or "prov:wasDerivedFrom"
+
+    def open(self, mode: str = "r", *args, **kwargs):
+        if any(x in mode for x in ("w", "a", "+")):
+            return super().open(mode, *args, **kwargs)
+        if not self.exists():
+            download_file(self.url, str(self), headers=self.headers or None)
+        return super().open(mode, *args, **kwargs)
 
 class OutPath(ProvPath):
     """Marker for output paths where ``"-"`` maps to stdout.

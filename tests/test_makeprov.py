@@ -7,22 +7,18 @@ from rdflib import Dataset, Graph, Literal, Namespace
 from rdflib.namespace import RDF, XSD
 
 from makeprov import (
-    GLOBAL_CONFIG,
     InDir,
     InPath,
     OutDir,
     OutPath,
     ProvenanceConfig,
     build,
-    get_config,
     list_rules,
     list_targets,
     main,
     plan,
     rule,
     new_session,
-    set_config,
-    update_config,
 )
 from makeprov.prov import Prov
 
@@ -78,23 +74,87 @@ def test_process_data(tmp_path):
 
 
 def test_config_manager_preserves_singleton():
-    original = get_config()
+    original = ProvenanceConfig.get()
     backup = ProvenanceConfig(**vars(original))
 
     try:
         new_cfg = ProvenanceConfig(prov_dir="custom", merge=False, out_fmt="trig")
-        updated = set_config(new_cfg)
+        updated = ProvenanceConfig.set(new_cfg)
 
-        assert updated is original
-        assert GLOBAL_CONFIG is original
-        assert get_config().prov_dir == "custom"
-        assert not get_config().merge
+        assert updated is ProvenanceConfig.get()
+        assert ProvenanceConfig.get().prov_dir == "custom"
+        assert not ProvenanceConfig.get().merge
 
-        update_config(prov_dir="next", context=True)
-        assert get_config().prov_dir == "next"
-        assert GLOBAL_CONFIG.context is True
+        ProvenanceConfig.set(ProvenanceConfig.get().clone_with(prov_dir="next", context=True))
+        assert ProvenanceConfig.get().prov_dir == "next"
+        assert ProvenanceConfig.get().context is True
     finally:
-        set_config(backup)
+        ProvenanceConfig.set(backup)
+
+
+def test_context_url_respected_when_not_embedding(monkeypatch, tmp_path):
+    prov_dir = tmp_path / "prov"
+    custom_context_url = "https://example.org/context.jsonld"
+    config = ProvenanceConfig(
+        prov_dir=str(prov_dir),
+        context=False,
+        context_url=custom_context_url,
+    )
+
+    @rule(name="no_embed_ctx", config=config)
+    def no_embed_ctx(out: OutPath = OutPath(tmp_path / "ctx.txt")):
+        out.write_text("ctx")
+
+    monkeypatch.chdir(tmp_path)
+    no_embed_ctx()
+
+    prov_files = list(prov_dir.glob("*.json"))
+    assert prov_files
+
+    prov_json = json.loads(prov_files[0].read_text())
+    assert prov_json["@context"] == custom_context_url
+
+
+def test_cli_conf_overrides_existing_config(monkeypatch, tmp_path):
+    original = ProvenanceConfig(**vars(ProvenanceConfig.get()))
+    try:
+        ProvenanceConfig.set(
+            ProvenanceConfig.get().clone_with(
+                prov_dir=str(tmp_path / "default-provenance"),
+                context=False,
+                context_url="https://default.example/context",
+            )
+        )
+
+        override_dir = tmp_path / "cli-prov"
+        override_context = "https://cli.example/context"
+
+        @rule(name="cli_conf_ctx_rule")
+        def cli_conf_ctx_rule(out: OutPath = OutPath(tmp_path / "cli-output.txt")):
+            out.write_text("ok")
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "prog",
+                "-c",
+                f'prov_dir = "{override_dir}"\ncontext_url = "{override_context}"',
+                "cli-conf-ctx-rule",
+            ],
+            raising=False,
+        )
+
+        main(subcommands=[cli_conf_ctx_rule])
+
+        prov_files = list(override_dir.glob("*.json"))
+        assert prov_files
+
+        prov_json = json.loads(prov_files[0].read_text())
+        assert prov_json["@context"] == override_context
+    finally:
+        ProvenanceConfig.set(original)
 
 
 def test_sessions_isolate_registries(tmp_path):

@@ -5,12 +5,24 @@ import csv
 from rdflib import Graph, Literal, Namespace
 from rdflib.namespace import RDF, XSD
 
-from makeprov import GLOBAL_CONFIG, InPath, OutPath, rule, main
+from makeprov import (
+    CachedDownload,
+    InPath,
+    OutPath,
+    ProvenanceConfig,
+    main,
+    rule,
+    span,
+)
 
 # Configure a dedicated provenance directory for this workflow example.
-GLOBAL_CONFIG.prov_dir = "sales_prov"
-GLOBAL_CONFIG.base_iri = "http://example.org/sales/"
-GLOBAL_CONFIG.out_fmt = "trig"
+ProvenanceConfig.set(
+    ProvenanceConfig.get().clone_with(
+        prov_dir="sales_prov",
+        base_iri="http://example.org/sales/",
+        out_fmt="trig",
+    )
+)
 
 SALES = Namespace("http://example.org/sales/")
 
@@ -128,19 +140,37 @@ def export_totals_graph(
 
 
 @rule(phony=True)
+def fetch_reference_rates(
+    rates_json: CachedDownload = CachedDownload(
+        "https://example.org/rates.json", "data/rates.json"
+    ),
+):
+    """Demonstrate cached downloads that track source URLs in provenance."""
+
+    with rates_json.open() as handle:
+        # In a real workflow you might parse these rates; here we just ensure
+        # the cache is populated when invoked.
+        return handle.read()
+
+
+@rule(phony=True)
 def build_sales_report() -> Graph:
     """Run the entire workflow and return the final RDF graph."""
     products_csv: OutPath = OutPath("data/products.csv"),
     orders_csv: OutPath = OutPath("data/orders.csv"),
     totals_csv: OutPath = OutPath("data/region_totals.csv"),
     graph_ttl: OutPath = OutPath("data/region_totals.ttl"),
-    create_seed_data(products_csv=products_csv, orders_csv=orders_csv)
-    build_region_totals(
-        products_csv=products_csv.as_inpath(),
-        orders_csv=orders_csv.as_inpath(),
-        totals_csv=totals_csv,
-    )
-    return export_totals_graph(totals_csv=totals_csv.as_inpath(), graph_ttl=graph_ttl)
+
+    with span("sales-report"):
+        # Optional: warm a cached download with provenance linkage
+        # fetch_reference_rates()
+        create_seed_data(products_csv=products_csv, orders_csv=orders_csv)
+        build_region_totals(
+            products_csv=products_csv.as_inpath(),
+            orders_csv=orders_csv.as_inpath(),
+            totals_csv=totals_csv,
+        )
+        return export_totals_graph(totals_csv=totals_csv.as_inpath(), graph_ttl=graph_ttl)
 
 
 if __name__ == "__main__":

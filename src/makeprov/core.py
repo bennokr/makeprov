@@ -10,8 +10,8 @@ from typing import Any, Callable, get_args, get_origin, get_type_hints
 
 from parse import compile as parse_compile, Parser
 
-from .config import ProvenanceConfig, ProvFormat, Frame, get_config
-from .paths import InDir, InPath, OutDir, OutPath
+from .config import ProvenanceConfig, ProvFormat, Frame
+from .paths import CachedDownload, InDir, InPath, OutDir, OutPath
 from .prov import Prov
 from .rdfmixin import RDFMixin
 
@@ -92,7 +92,9 @@ def start_prov_buffer(*, session: Session | None = None) -> None:
     are avoided by the public APIs to keep merge semantics predictable.
     """
 
-    _get_session(session).prov_buffers.append([])
+    sess = _get_session(session)
+    sess.prov_buffers.append([])
+    logging.debug("Started provenance buffer (depth=%d)", len(sess.prov_buffers))
 
 
 def flush_prov_buffer(
@@ -111,7 +113,7 @@ def flush_prov_buffer(
     parent buffer exists, the merged provenance is appended to it for further
     aggregation; otherwise, the merged provenance is written to disk using the
     provided configuration (falling back to the process-wide configuration via
-    :func:`makeprov.config.get_config`).
+    :class:`makeprov.ProvenanceConfig`).
     """
 
     sess = _get_session(session)
@@ -123,14 +125,26 @@ def flush_prov_buffer(
         return None
 
     merged = Prov.merge(buffer)
+    logging.debug("Merged %d provenance records", len(buffer))
 
     parent = _current_prov_buffer(sess)
     if parent is not None:
         parent.append(merged)
+        logging.debug(
+            "Appended merged provenance to parent buffer (depth=%d)", len(sess.prov_buffers)
+        )
         return merged
 
-    cfg = config or get_config()
+    cfg = config or ProvenanceConfig.get()
     destination = prov_path or cfg.prov_path or Path(cfg.prov_dir) / merged.name
+    logging.debug(
+        "Flushing provenance to %s (fmt=%s, frame=%s, context=%s, context_url=%s)",
+        destination,
+        fmt if fmt is not None else cfg.out_fmt,
+        frame if frame is not None else cfg.frame,
+        context if context is not None else cfg.context,
+        context_url if context_url is not None else cfg.context_url,
+    )
     merged.write(
         destination,
         fmt=fmt if fmt is not None else cfg.out_fmt,
@@ -248,7 +262,7 @@ def rule(
             trig named graph. Options: `"provenance"` or `"results"`.
         config (ProvenanceConfig | None): Configuration object to use instead of
             the process-wide configuration returned by
-            :func:`makeprov.config.get_config`.
+            :class:`makeprov.ProvenanceConfig`.
         context (bool | None): Whether to embed JSON-LD context in output when
             writing provenance.
         merge (bool | None): When ``True``, buffer provenance for this rule and
@@ -348,7 +362,7 @@ def rule(
 
             fmt_kwargs = bound.arguments
 
-            base_config = config or get_config()
+            base_config = config or ProvenanceConfig.get()
             rule_config = ProvenanceConfig(
                 base_iri=base_iri if base_iri is not None else base_config.base_iri,
                 prov_dir=prov_dir if prov_dir is not None else base_config.prov_dir,
@@ -359,6 +373,7 @@ def rule(
                 frame=frame if frame is not None else base_config.frame,
                 merge=merge if merge is not None else base_config.merge,
                 context=context if context is not None else base_config.context,
+                context_url=base_config.context_url,
             )
 
             in_files: list[Path] = []
@@ -374,10 +389,18 @@ def rule(
                 paths: list[Path] = []
                 if isinstance(val, InPath):
                     s = _format_if_template(str(val))
-                    new_val = val.__class__(s)
+                    if isinstance(val, CachedDownload):
+                        new_val = val.__class__(
+                            val.url,
+                            s,
+                            headers=val.headers,
+                            transform=val.transform,
+                        )
+                    else:
+                        new_val = val.__class__(s)
                     bound.arguments[pname] = new_val
                     if not new_val.is_stream:
-                        paths.append(Path(s))
+                        paths.append(new_val)
                 elif val is None:
                     return paths
                 else:
@@ -395,7 +418,7 @@ def rule(
                     new_val = val.__class__(s)
                     bound.arguments[pname] = new_val
                     if not new_val.is_stream:
-                        paths.append(Path(s))
+                        paths.append(new_val)
                 elif val is None:
                     return paths
                 else:
@@ -469,8 +492,8 @@ def rule(
                         run_id=t0.strftime("%Y%m%dT%H%M"),
                         t0=t0,
                         t1=t1,
-                        inputs=[Path(p) for p in in_files],
-                        outputs=[Path(p) for p in out_files],
+                        inputs=list(in_files),
+                        outputs=list(out_files),
                         results=results,
                         success=exc is None,
                     )
@@ -585,7 +608,7 @@ def build(
     _seen.add(target_str)
 
     buffer_started = False
-    if top_level and get_config().merge and _current_prov_buffer(sess) is None:
+    if top_level and ProvenanceConfig.get().merge and _current_prov_buffer(sess) is None:
         start_prov_buffer(session=sess)
         buffer_started = True
 

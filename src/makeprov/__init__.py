@@ -1,15 +1,8 @@
 """Track file provenance in Python workflows using PROV semantics"""
 from __future__ import annotations
 
-from .config import (
-    ProvenanceConfig,
-    GLOBAL_CONFIG,
-    get_config,
-    set_config,
-    update_config,
-    main,
-)
-from .paths import ProvPath, InPath, OutPath, OutDir, InDir
+from .config import ProvenanceConfig, Config, main
+from .paths import ProvPath, InPath, OutPath, OutDir, InDir, CachedDownload
 from .core import (
     COMMANDS,
     Session,
@@ -28,19 +21,18 @@ from .core import (
     to_dot,
 )
 from .rdfmixin import RDFMixin
+from .span import span
 
 __all__ = [
+    "Config",
     "ProvenanceConfig",
-    "GLOBAL_CONFIG",
-    "get_config",
-    "set_config",
-    "update_config",
     "main",
     "ProvPath",
     "InPath",
     "OutPath",
     "OutDir",
     "InDir",
+    "CachedDownload",
     "rule",
     "needs_update",
     "build",
@@ -57,4 +49,5 @@ __all__ = [
     "root_targets",
     "dry_run_build",
     "RDFMixin",
+    "span",
 ]

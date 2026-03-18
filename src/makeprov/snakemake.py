@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .config import GLOBAL_CONFIG, ProvenanceConfig, apply_config, get_config
+from .config import ProvenanceConfig
 from .prov import (
     COMMON_CONTEXT,
     ActivityNode,
@@ -379,7 +379,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--context",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Embed JSON-LD context inline.",
     )
     parser.add_argument(
@@ -389,7 +390,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--forceall-dag",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help=(
             "Add --forceall to the d3dag call to avoid missing edges from "
             "needrun filtering."
@@ -403,9 +405,9 @@ def main(argv: list[str] | None = None) -> int:
 
     namespace = parser.parse_args(argv)
 
-    cfg = ProvenanceConfig(**vars(get_config()))
+    cfg = ProvenanceConfig(**vars(ProvenanceConfig.get()))
     for toml_ref in namespace.conf:
-        apply_config(cfg, toml_ref)
+        cfg.apply(toml_ref)
 
     if namespace.prov_dir is not None:
         cfg.prov_dir = namespace.prov_dir
@@ -415,8 +417,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg.out_fmt = namespace.out_fmt  # type: ignore[assignment]
     if namespace.frame is not None:
         cfg.frame = namespace.frame  # type: ignore[assignment]
-    if namespace.context:
-        cfg.context = True
+    if namespace.context is not None:
+        cfg.context = namespace.context
 
     smk_args = list(namespace.snakemake_args)
     if smk_args and smk_args[0] == "--":
@@ -425,7 +427,7 @@ def main(argv: list[str] | None = None) -> int:
     dag = get_d3dag_json(
         namespace.snakemake,
         smk_args,
-        forceall_dag=namespace.forceall_dag,
+        forceall_dag=bool(namespace.forceall_dag),
     )
     summary = get_detailed_summary(namespace.snakemake, smk_args)
 

@@ -34,11 +34,11 @@ def main() -> None:
         shutil.rmtree(autosummary_dir)
     autosummary_dir.mkdir(parents=True, exist_ok=True)
 
-    # Publish JSON-LD context into docs (latest and versioned)
+    # Publish JSON-LD context into build output (latest and versioned)
     context_src = repo_root / "src" / "makeprov" / "context.jsonld"
     if context_src.exists():
-        shutil.copyfile(context_src, docs_source / "context.jsonld")
-        shutil.copyfile(context_src, docs_source / f"context-{release}.jsonld")
+        shutil.copyfile(context_src, docs_build / "context.jsonld")
+        shutil.copyfile(context_src, docs_build / f"context-{release}.jsonld")
 
     args = [
         "-b",

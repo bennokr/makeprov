@@ -1,11 +1,13 @@
 """Demonstrate configuring provenance context and running in an isolated session."""
 
-from makeprov import InPath, OutPath, Session, main, rule, update_config
+from makeprov import InPath, OutPath, Session, ProvenanceConfig, main, rule
 
 # Pin the base IRI for identifiers and write provenance beneath examples/prov
-update_config(
-    base_iri="https://example.org/workflows/context-demo",
-    prov_dir="examples/prov/context-demo",
+ProvenanceConfig.set(
+    ProvenanceConfig.get().clone_with(
+        base_iri="https://example.org/workflows/context-demo",
+        prov_dir="examples/prov/context-demo",
+    )
 )
 
 session = Session()

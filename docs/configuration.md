@@ -1,10 +1,9 @@
 # Configuration
 
-`makeprov` reads settings from a process-wide configuration instance returned by
-{func}`makeprov.config.get_config` (also available as
-{data}`makeprov.config.GLOBAL_CONFIG` for compatibility) and allows runtime
-overrides via the command line. This page summarizes the available options and
-demonstrates common configurations.
+`makeprov` reads settings from a process-wide configuration instance stored on
+{class}`makeprov.ProvenanceConfig` and allows runtime overrides via the command
+line. This page summarizes the available options and demonstrates common
+configurations.
 
 ## Available options
 
@@ -30,16 +29,14 @@ python -m makeprov --conf '{prov_dir="artifacts/prov"}' my_rule
 python -m makeprov --conf @config/provenance.toml --conf '{out_fmt="trig"}' my_rule
 ```
 
-You can also update the configuration programmatically without rebinding the
-global reference:
+You can also update the configuration programmatically:
 
 ```python
-from makeprov import get_config, update_config
-from makeprov.config import apply_config
+from makeprov import ProvenanceConfig
 
-cfg = get_config()
-apply_config(cfg, '{force=true, out_fmt="trig"}')
-update_config(prov_dir="artifacts/prov")
+cfg = ProvenanceConfig.get()
+cfg.apply('{force=true, out_fmt="trig"}')
+ProvenanceConfig.set(cfg.clone_with(prov_dir="artifacts/prov"))
 ```
 
 ## Merge semantics
@@ -59,8 +56,8 @@ call to {class}`makeprov.prov.Prov.create` copies the common context and applies
 repository-specific defaults (such as ``@base`` and ``blob`` IRIs discovered
 from git) to the copy instead of mutating shared globals. This guarantees that
 one workflow run cannot leak context updates into another. Use
-{func}`makeprov.config.update_config` to set a ``base_iri`` for identifiers
-without worrying about cross-run side effects.
+{class}`makeprov.ProvenanceConfig` to set a ``base_iri`` for identifiers without
+worrying about cross-run side effects.
 
 ## Isolating state with sessions
 
