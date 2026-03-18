@@ -294,6 +294,7 @@ class OutDir(OutPath):
     def __new__(cls, *paths: str | bytes | ProvPath):  # type: ignore[override]
         self = super().__new__(cls, *paths)
         self._children: list[OutPath] = []
+        self._subdirs: list["OutDir"] = []
         return self
 
     def file(self, name: str | os.PathLike[str]) -> OutPath:
@@ -301,9 +302,24 @@ class OutDir(OutPath):
         self._children.append(child)
         return child
 
+    def subdir(self, name: str | os.PathLike[str]) -> "OutDir":
+        child = OutDir(self / name)
+        self._subdirs.append(child)
+        return child
+
     @property
     def children(self) -> tuple[OutPath, ...]:
         return tuple(self._children)
+
+    @property
+    def subdirs(self) -> tuple["OutDir", ...]:
+        return tuple(self._subdirs)
+
+    def all_children(self) -> tuple[OutPath, ...]:
+        files: list[OutPath] = list(self._children)
+        for subdir in self._subdirs:
+            files.extend(subdir.all_children())
+        return tuple(files)
 
 
 class InDir(InPath):
@@ -316,6 +332,7 @@ class InDir(InPath):
     def __new__(cls, *paths: str | bytes | ProvPath):  # type: ignore[override]
         self = super().__new__(cls, *paths)
         self._children: list[InPath] = []
+        self._subdirs: list["InDir"] = []
         return self
 
     def file(self, name: str | os.PathLike[str]) -> InPath:
@@ -323,6 +340,21 @@ class InDir(InPath):
         self._children.append(child)
         return child
 
+    def subdir(self, name: str | os.PathLike[str]) -> "InDir":
+        child = InDir(self / name)
+        self._subdirs.append(child)
+        return child
+
     @property
     def children(self) -> tuple[InPath, ...]:
         return tuple(self._children)
+
+    @property
+    def subdirs(self) -> tuple["InDir", ...]:
+        return tuple(self._subdirs)
+
+    def all_children(self) -> tuple[InPath, ...]:
+        files: list[InPath] = list(self._children)
+        for subdir in self._subdirs:
+            files.extend(subdir.all_children())
+        return tuple(files)

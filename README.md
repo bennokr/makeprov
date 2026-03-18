@@ -237,7 +237,9 @@ Rules can merge the provenance from any rules they invoke by passing
 ``merge=True`` to `makeprov.rule`. Pair this with
 `makeprov.OutDir` to declare a directory and then materialize multiple
 outputs beneath it while keeping them linked to a single provenance record. Use
-`makeprov.InDir` for the same tracked-directory semantics on inputs.
+`makeprov.InDir` for the same tracked-directory semantics on inputs. For nested
+structures, call `subdir()` on an `OutDir`/`InDir` to auto-wrap subfolders
+without manually constructing new instances.
 See [`examples/merge_outdir_example.py`](examples/merge_outdir_example.py) for an example.
 
 Merging is enabled by default: top-level runs start a provenance buffer and

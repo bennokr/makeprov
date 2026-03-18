@@ -134,11 +134,17 @@ def write_assets(bundle: OutDir = OutDir("assets/v1/")):
 
     readme.write_text("asset bundle\n")
     logo.write_text("v1 logo\n")
+
+    # Nest tracked files under subdirectories without creating a new OutDir manually
+    images = bundle.subdir("images")
+    hero = images.file("hero.png")
+    hero.write_text("png-bytes-here")
 ```
 
 When the rule finishes, the provenance record includes both `assets/v1/README.txt`
 and `assets/v1/logo.txt` even though only the directory was declared as a
-parameter.
+parameter. Use ``subdir()`` to collect deeper trees without constructing
+additional :class:`~makeprov.paths.OutDir` instances yourself.
 
 ## Merging provenance across nested rules
 

@@ -546,6 +546,80 @@ def test_indir_tracks_inputs(monkeypatch, tmp_path):
     assert any(node["id"].endswith("data/s1/aux/info.txt") for node in inputs)
 
 
+def test_outdir_subdir_tracks_nested_outputs(monkeypatch, tmp_path):
+    prov_dir = tmp_path / "prov"
+    config = ProvenanceConfig(prov_dir=str(prov_dir))
+
+    @rule(name="nested_outputs", config=config)
+    def nested_outputs(out: OutDir = OutDir("results/")):
+        assets = out.subdir("assets")
+        icons = assets.subdir("icons")
+        main = out.file("main.txt")
+        logo = assets.file("logo.txt")
+        icon = icons.file("icon.svg")
+
+        main.write_text("main")
+        logo.write_text("logo")
+        icon.write_text("<svg></svg>")
+
+    monkeypatch.chdir(tmp_path)
+    nested_outputs()
+
+    assert (tmp_path / "results/main.txt").exists()
+    assert (tmp_path / "results/assets/logo.txt").exists()
+    assert (tmp_path / "results/assets/icons/icon.svg").exists()
+
+    prov_files = list(prov_dir.glob("*"))
+    assert len(prov_files) == 1
+
+    prov_json = json.loads(prov_files[0].read_text())
+    outputs = [
+        node
+        for node in prov_json["provenance"]
+        if node.get("wasGeneratedBy")
+    ]
+
+    assert any(node["id"].endswith("results/main.txt") for node in outputs)
+    assert any(node["id"].endswith("results/assets/logo.txt") for node in outputs)
+    assert any(node["id"].endswith("results/assets/icons/icon.svg") for node in outputs)
+
+
+def test_indir_subdir_tracks_nested_inputs(monkeypatch, tmp_path):
+    prov_dir = tmp_path / "prov"
+    config = ProvenanceConfig(prov_dir=str(prov_dir))
+
+    @rule(name="consume_nested_inputs", config=config)
+    def consume(
+        bundle: InDir = InDir("data/{sample}/"),
+        out: OutPath = OutPath("out_nested.txt"),
+        sample: str = "s1",
+    ):
+        assets = bundle.subdir("assets")
+        logo = assets.file("logo.txt")
+        out.write_text(logo.read_text())
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data" / "s1" / "assets").mkdir(parents=True)
+    (tmp_path / "data" / "s1" / "assets" / "logo.txt").write_text("logo\n")
+
+    consume()
+
+    prov_files = list(prov_dir.glob("*"))
+    assert len(prov_files) == 1
+
+    prov_json = json.loads(prov_files[0].read_text())
+    inputs: list[dict] = []
+    for node in prov_json["provenance"]:
+        used = node.get("used")
+        if not used:
+            continue
+        for entry in used:
+            if isinstance(entry, dict) and entry.get("type") == "prov:Entity":
+                inputs.append(entry)
+
+    assert any(node["id"].endswith("data/s1/assets/logo.txt") for node in inputs)
+
+
 def test_prov_results_frame_jsonld(monkeypatch, tmp_path):
     prov_dir = tmp_path / "prov"
     config = ProvenanceConfig(prov_dir=str(prov_dir), context=True, frame = "results")

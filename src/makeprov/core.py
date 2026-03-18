@@ -531,7 +531,7 @@ def rule(
             for pname in in_params:
                 val = bound.arguments.get(pname)
                 if isinstance(val, InDir):
-                    in_files.extend(Path(p) for p in val.children)
+                    in_files.extend(Path(p) for p in val.all_children())
 
             # External references never participate in staleness checks: they
             # have no local mtime to compare against.
@@ -575,12 +575,12 @@ def rule(
                     for pname in in_params:
                         val = bound.arguments.get(pname)
                         if isinstance(val, InDir):
-                            in_files.extend(Path(p) for p in val.children)
+                            in_files.extend(Path(p) for p in val.all_children())
 
                     for pname in out_params:
                         val = bound.arguments.get(pname)
                         if isinstance(val, OutDir):
-                            out_files.extend(Path(p) for p in val.children)
+                            out_files.extend(Path(p) for p in val.all_children())
 
                     # Make sure results are a list
                     if isinstance(result, (list, tuple, set)):
