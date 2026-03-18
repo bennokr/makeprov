@@ -18,6 +18,7 @@ demonstrates common configurations.
 | `dry_run` | Log actions without running rule bodies. |
 | `out_fmt` | Output format: `"json"` for JSON-LD or `"trig"` for RDF TriG. |
 | `context` | Embed JSON-LD context in output documents. |
+| `context_url` | URL to reference in `@context` when `context` is `false`. |
 
 ## Applying overrides
 
@@ -81,6 +82,11 @@ build("data/output.txt", session=session)
 
 Pass the same ``session`` to CLI entrypoints via
 {func}`makeprov.config.main` to ensure commands and buffers remain isolated.
+
+## Context handling
+
+Set `context=true` to embed the JSON-LD context inline from `src/makeprov/context.jsonld`.  
+When `context=false`, the `@context` field is set to `context_url` (default: `https://w3id.org/makeprov/context`), so you can pin consumers to a specific published version without hard-coding it in code. Override `context_url` in a TOML snippet or file if you host the context elsewhere.
 
 ## Inspecting dependency graphs
 

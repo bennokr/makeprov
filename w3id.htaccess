@@ -1,0 +1,10 @@
+RewriteEngine On
+
+# Root: send users to project docs homepage
+RewriteRule ^$ https://bennokr.github.io/makeprov/ [R=302,L]
+
+# Latest context
+RewriteRule ^context/?$ https://bennokr.github.io/makeprov/context.jsonld [R=302,L]
+
+# Versioned contexts, e.g. /context/0.4.3 -> context-0.4.3.jsonld
+RewriteRule ^context/([0-9]+(?:\\.[0-9]+)*)/?$ https://bennokr.github.io/makeprov/context-$1.jsonld [R=302,L]

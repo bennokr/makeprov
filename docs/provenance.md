@@ -10,7 +10,9 @@ model.
 When ``out_fmt`` is set to ``"json"``, the resulting file contains a top-level
 ``provenance`` array with entries for activities, agents, entities, and optional
 result graphs. Set ``context=True`` to embed the JSON-LD context alongside the
-graph data.
+graph data. When ``context=False``, the ``@context`` field points to the
+published context URL (configurable via ``context_url``) so consumers can reuse
+a shared, versioned context document.
 
 ```json
 {

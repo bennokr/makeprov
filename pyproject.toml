@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "makeprov"
-version = "0.4.3"
+version = "0.4.4"
 description = "An provenance tracking library for simple Python workflows"
 readme = "README.md"
 license = { text = "MIT" }
@@ -38,7 +38,7 @@ docs = [
 
 [project.urls]
 "Homepage" = "https://github.com/bennokr/makeprov"
-"Documentation" = "https://makeprov.readthedocs.io"
+"Documentation" = "https://bennokr.github.io/makeprov"
 "Issue Tracker" = "https://github.com/bennokr/makeprov/issues"
 
 [tool.pytape]

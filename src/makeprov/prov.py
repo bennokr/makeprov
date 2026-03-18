@@ -17,42 +17,9 @@ from .config import Frame
 
 # ---------- JSON-LD dataclasses ----------
 
-COMMON_CONTEXT = {
-    "prov": "http://www.w3.org/ns/prov#",
-    "dct": "http://purl.org/dc/terms/",
-    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
-    "xsd": "http://www.w3.org/2001/XMLSchema#",
-    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-    "schema": "https://schema.org/",
-    "id": "@id",
-    "type": "@type",
-    "provenance": "@graph",
-    "startedAtTime": {"@id": "prov:startedAtTime", "@type": "xsd:dateTime"},
-    "endedAtTime": {"@id": "prov:endedAtTime", "@type": "xsd:dateTime"},
-    "wasAssociatedWith": {
-        "@id": "prov:wasAssociatedWith",
-        "@type": "@id",
-        "@container": "@set",
-    },
-    "used": {"@id": "prov:used", "@type": "@id", "@container": "@set"},
-    "wasGeneratedBy": {"@id": "prov:wasGeneratedBy", "@type": "@id"},
-    "wasAttributedTo": {
-        "@id": "prov:wasAttributedTo",
-        "@type": "@id",
-        "@container": "@set",
-    },
-    "generatedAtTime": {"@id": "prov:generatedAtTime", "@type": "xsd:dateTime"},
-    "format": "dct:format",
-    "extent": "dct:extent",
-    "modified": {"@id": "dct:modified", "@type": "xsd:dateTime"},
-    "identifier": "dct:identifier",
-    "label": "rdfs:label",
-    "title": "dct:title",
-    "hasVersion": "dct:hasVersion",
-    "source": {"@id": "dct:source", "@type": "@id"},
-    "requires": {"@id": "dct:requires", "@type": "@id", "@container": "@set"},
-    "comment": "rdfs:comment",
-}
+_CONTEXT_PATH = Path(__file__).parent / "context.jsonld"
+# Keep a parsed JSON-LD context so it can be embedded directly when requested.
+COMMON_CONTEXT = json.loads(_CONTEXT_PATH.read_text(encoding="utf-8"))
 
 
 JSONLDRef: TypeAlias = str | dict[str, Any]
@@ -618,7 +585,14 @@ class Prov:
 
         return ds
 
-    def write(self, prov_path: str | Path, fmt="json", frame="provenance", context=False) -> Path:
+    def write(
+        self,
+        prov_path: str | Path,
+        fmt="json",
+        frame="provenance",
+        context=False,
+        context_url: str | None = None,
+    ) -> Path:
         """Serialize provenance to disk.
 
         Args:
@@ -647,6 +621,11 @@ class Prov:
 
         if fmt == "json":
             data = self.to_jsonld(frame=frame, with_context=context)
+
+            if not context and context_url:
+                # Point consumers to the published context when not embedding.
+                data["@context"] = context_url
+
             final = out.with_suffix(".json")
             logging.info("Writing JSON-LD provenance %s", final)
             final.write_text(json.dumps(data, indent=2), encoding="utf-8")

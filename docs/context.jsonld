@@ -1,0 +1,36 @@
+{
+    "prov": "http://www.w3.org/ns/prov#",
+    "dct": "http://purl.org/dc/terms/",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "schema": "https://schema.org/",
+    "id": "@id",
+    "type": "@type",
+    "provenance": "@graph",
+    "startedAtTime": {"@id": "prov:startedAtTime", "@type": "xsd:dateTime"},
+    "endedAtTime": {"@id": "prov:endedAtTime", "@type": "xsd:dateTime"},
+    "wasAssociatedWith": {
+        "@id": "prov:wasAssociatedWith",
+        "@type": "@id",
+        "@container": "@set"
+    },
+    "used": {"@id": "prov:used", "@type": "@id", "@container": "@set"},
+    "wasGeneratedBy": {"@id": "prov:wasGeneratedBy", "@type": "@id"},
+    "wasAttributedTo": {
+        "@id": "prov:wasAttributedTo",
+        "@type": "@id",
+        "@container": "@set"
+    },
+    "generatedAtTime": {"@id": "prov:generatedAtTime", "@type": "xsd:dateTime"},
+    "format": "dct:format",
+    "extent": "dct:extent",
+    "modified": {"@id": "dct:modified", "@type": "xsd:dateTime"},
+    "identifier": "dct:identifier",
+    "label": "rdfs:label",
+    "title": "dct:title",
+    "hasVersion": "dct:hasVersion",
+    "source": {"@id": "dct:source", "@type": "@id"},
+    "requires": {"@id": "dct:requires", "@type": "@id", "@container": "@set"},
+    "comment": "rdfs:comment"
+}

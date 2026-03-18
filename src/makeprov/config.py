@@ -27,6 +27,7 @@ class ProvenanceConfig:
         frame: Which structure to make primary subject of jsonld or 
             trig named graph. Options: `"provenance"` or `"results"`.
         context: Whether JSON-LD outputs include the context inline.
+        context_url: URL to reference in ``@context`` when ``context`` is False.
 
     """
 
@@ -39,6 +40,7 @@ class ProvenanceConfig:
     out_fmt: ProvFormat = "json"
     context: bool = False
     frame: Frame = "provenance"
+    context_url: str = "https://w3id.org/makeprov/context"
 
 
 _GLOBAL_CONFIG = ProvenanceConfig()

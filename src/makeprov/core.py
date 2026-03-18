@@ -102,6 +102,7 @@ def flush_prov_buffer(
     fmt: ProvFormat | None = None,
     frame: Frame | None = None,
     context: bool | None = None,
+    context_url: str | None = None,
     session: Session | None = None,
 ) -> Prov | None:
     """Write or propagate the most recent provenance buffer.
@@ -135,6 +136,7 @@ def flush_prov_buffer(
         fmt=fmt if fmt is not None else cfg.out_fmt,
         frame=frame if frame is not None else cfg.frame,
         context=context if context is not None else cfg.context,
+        context_url=context_url if context_url is not None else cfg.context_url,
     )
     return merged
 
@@ -488,6 +490,7 @@ def rule(
                             fmt=rule_config.out_fmt,
                             frame=rule_config.frame,
                             context=rule_config.context,
+                            context_url=rule_config.context_url,
                         )
 
                     if buffer_started:
@@ -497,6 +500,7 @@ def rule(
                             fmt=rule_config.out_fmt,
                             frame=rule_config.frame,
                             context=rule_config.context,
+                            context_url=rule_config.context_url,
                             session=sess,
                         )
                 except Exception as prov_exc:  # noqa: BLE001

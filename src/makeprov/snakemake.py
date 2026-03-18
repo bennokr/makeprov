@@ -441,7 +441,13 @@ def main(argv: list[str] | None = None) -> int:
     else:
         destination = Path(cfg.prov_dir) / namespace.name
 
-    prov.write(destination, fmt=cfg.out_fmt, frame=cfg.frame, context=cfg.context)
+    prov.write(
+        destination,
+        fmt=cfg.out_fmt,
+        frame=cfg.frame,
+        context=cfg.context,
+        context_url=cfg.context_url,
+    )
     return 0
 
 
