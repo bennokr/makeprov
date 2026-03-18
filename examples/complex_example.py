@@ -161,7 +161,7 @@ def build_sales_report() -> Graph:
     totals_csv: OutPath = OutPath("data/region_totals.csv"),
     graph_ttl: OutPath = OutPath("data/region_totals.ttl"),
 
-    with span("sales-report"):
+    with span("sales-report", prov_path="sales_prov/sales-report") as sp:
         # Optional: warm a cached download with provenance linkage
         # fetch_reference_rates()
         create_seed_data(products_csv=products_csv, orders_csv=orders_csv)
@@ -170,7 +170,11 @@ def build_sales_report() -> Graph:
             orders_csv=orders_csv.as_inpath(),
             totals_csv=totals_csv,
         )
-        return export_totals_graph(totals_csv=totals_csv.as_inpath(), graph_ttl=graph_ttl)
+        graph = export_totals_graph(totals_csv=totals_csv.as_inpath(), graph_ttl=graph_ttl)
+
+    # The span returns the merged provenance for nested consumers.
+    assert sp.prov is not None and sp.prov.name == "sales-report"
+    return graph
 
 
 if __name__ == "__main__":

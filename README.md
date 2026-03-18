@@ -178,7 +178,8 @@ You can customize the provenance tracking with the following options:
 
 Use `makeprov.span(label, prov_path=None, frame=None, context=None)` as a
 context manager or decorator to bracket a chunk of work in its own provenance
-buffer:
+buffer. A span returns the merged `Prov` via `span.prov`, so nested spans can
+emit labeled artifacts without manual slicing/merging:
 
 ```python
 from makeprov import span

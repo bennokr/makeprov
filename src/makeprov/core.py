@@ -106,14 +106,16 @@ def flush_prov_buffer(
     context: bool | None = None,
     context_url: str | None = None,
     session: Session | None = None,
+    label: str | None = None,
 ) -> Prov | None:
     """Write or propagate the most recent provenance buffer.
 
     Returns the merged :class:`Prov` object for the flushed buffer. When a
     parent buffer exists, the merged provenance is appended to it for further
-    aggregation; otherwise, the merged provenance is written to disk using the
-    provided configuration (falling back to the process-wide configuration via
-    :class:`makeprov.ProvenanceConfig`).
+    aggregation. When ``prov_path`` is provided, the merged provenance is
+    written even if a parent buffer exists. Without a parent buffer, the merged
+    provenance is written to disk using the provided configuration (falling
+    back to the process-wide configuration via :class:`makeprov.ProvenanceConfig`).
     """
 
     sess = _get_session(session)
@@ -125,6 +127,14 @@ def flush_prov_buffer(
         return None
 
     merged = Prov.merge(buffer)
+    if label:
+        merged.name = label
+
+    cfg = config or ProvenanceConfig.get()
+    fmt_val = fmt if fmt is not None else cfg.out_fmt
+    frame_val = frame if frame is not None else cfg.frame
+    context_val = context if context is not None else cfg.context
+    context_url_val = context_url if context_url is not None else cfg.context_url
     logging.debug("Merged %d provenance records", len(buffer))
 
     parent = _current_prov_buffer(sess)
@@ -133,24 +143,39 @@ def flush_prov_buffer(
         logging.debug(
             "Appended merged provenance to parent buffer (depth=%d)", len(sess.prov_buffers)
         )
+        if prov_path is not None:
+            logging.debug(
+                "Writing nested provenance to %s (fmt=%s, frame=%s, context=%s, context_url=%s)",
+                prov_path,
+                fmt_val,
+                frame_val,
+                context_val,
+                context_url_val,
+            )
+            merged.write(
+                prov_path,
+                fmt=fmt_val,
+                frame=frame_val,
+                context=context_val,
+                context_url=context_url_val,
+            )
         return merged
 
-    cfg = config or ProvenanceConfig.get()
     destination = prov_path or cfg.prov_path or Path(cfg.prov_dir) / merged.name
     logging.debug(
         "Flushing provenance to %s (fmt=%s, frame=%s, context=%s, context_url=%s)",
         destination,
-        fmt if fmt is not None else cfg.out_fmt,
-        frame if frame is not None else cfg.frame,
-        context if context is not None else cfg.context,
-        context_url if context_url is not None else cfg.context_url,
+        fmt_val,
+        frame_val,
+        context_val,
+        context_url_val,
     )
     merged.write(
         destination,
-        fmt=fmt if fmt is not None else cfg.out_fmt,
-        frame=frame if frame is not None else cfg.frame,
-        context=context if context is not None else cfg.context,
-        context_url=context_url if context_url is not None else cfg.context_url,
+        fmt=fmt_val,
+        frame=frame_val,
+        context=context_val,
+        context_url=context_url_val,
     )
     return merged
 

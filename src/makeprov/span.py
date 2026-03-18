@@ -6,6 +6,7 @@ from typing import Any
 
 from .config import ProvenanceConfig
 from .core import flush_prov_buffer, start_prov_buffer
+from .prov import Prov
 
 
 class span(ContextDecorator):
@@ -30,18 +31,21 @@ class span(ContextDecorator):
         self.frame = frame
         self.context = context
         self.session = session
+        self.prov: Prov | None = None
 
     def __enter__(self):
+        self.prov = None
         start_prov_buffer(session=self.session)
         return self
 
     def __exit__(self, exc_type, exc, tb):
         cfg = ProvenanceConfig.get()
         destination = self.prov_path or Path(cfg.prov_dir) / self.label
-        flush_prov_buffer(
+        self.prov = flush_prov_buffer(
             prov_path=destination,
             frame=self.frame,
             context=self.context,
+            label=self.label,
             session=self.session,
         )
         # Propagate exceptions

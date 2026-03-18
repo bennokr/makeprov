@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from makeprov import CachedDownload, OutPath, ProvenanceConfig, rule, span
+from makeprov.prov import Prov
 
 
 def test_span_scopes_provenance(monkeypatch, tmp_path):
@@ -26,6 +27,30 @@ def test_span_scopes_provenance(monkeypatch, tmp_path):
 
         prov_json = json.loads(prov_files[0].read_text())
         assert prov_json["provenance"]
+    finally:
+        ProvenanceConfig.set(original)
+
+
+def test_span_returns_prov_and_writes_when_nested(monkeypatch, tmp_path):
+    original = ProvenanceConfig(**vars(ProvenanceConfig.get()))
+    try:
+        prov_dir = tmp_path / "prov"
+        ProvenanceConfig.set(ProvenanceConfig(prov_dir=str(prov_dir)))
+
+        @rule(name="nested_span_rule")
+        def nested_span_rule(out: OutPath = OutPath(tmp_path / "nested-out.txt")):
+            out.write_text("ok")
+
+        monkeypatch.chdir(tmp_path)
+
+        with span("outer-span"):
+            nested_path = tmp_path / "per-model" / "model-a"
+            with span("model-a", prov_path=nested_path) as sp:
+                nested_span_rule()
+
+            assert isinstance(sp.prov, Prov)
+            assert sp.prov.name == "model-a"
+            assert nested_path.with_suffix(".json").exists()
     finally:
         ProvenanceConfig.set(original)
 

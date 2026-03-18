@@ -155,6 +155,25 @@ def build_site(
 Invoking ``build("site/1/")`` runs the fragment rule, writes directory outputs,
 and emits a single merged provenance dataset for the entire workflow.
 
+## Scoped spans and explicit outputs
+
+Use :func:`makeprov.span` to bracket arbitrary work in its own provenance
+buffer. A span returns the merged :class:`~makeprov.prov.Prov` via
+``span.prov`` and can write to a specific path when nested, which makes
+per-model or per-shard provenance a one-liner:
+
+```python
+from makeprov import span, rule, OutPath
+
+@rule()
+def train_model(out: OutPath = OutPath("models/a.txt")):
+    out.write_text("ok")
+
+with span("model-a", prov_path="prov/models/a") as sp:
+    train_model()
+    assert sp.prov.name == "model-a"
+```
+
 ## Controlling provenance framing
 
 ``Prov`` objects can be serialized directly via :meth:`~makeprov.prov.Prov.to_jsonld`
