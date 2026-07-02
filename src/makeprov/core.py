@@ -12,7 +12,7 @@ from parse import compile as parse_compile, Parser
 
 from .config import ProvenanceConfig, ProvFormat, Frame
 from .paths import CachedDownload, InDir, InPath, OutDir, OutPath
-from .prov import Prov
+from .prov import Prov, ProvenanceWriteError
 from .rdfmixin import RDFMixin
 
 try:
@@ -52,9 +52,16 @@ class Session:
     prov_buffers: list[list[Prov]] = field(default_factory=list)
 
 
+# A process-wide Session used implicitly by makeprov.rule()/build() when no
+# `session=` is passed. This is a convenience for scripts and notebooks;
+# prefer makeprov.new_session() for tests, multiprocessing, or embedding
+# makeprov in a larger application, where a shared process-wide registry is
+# the wrong default.
 _DEFAULT_SESSION = Session()
 
-# Backwards-compatible references to the default session.
+# Read-only-by-convention references into the default session, kept for
+# introspection (e.g. `len(makeprov.COMMANDS)`). Mutate via `rule()`, not
+# these directly.
 RULES_BY_TARGET = _DEFAULT_SESSION.rules_by_target
 RULES_BY_NAME = _DEFAULT_SESSION.rules_by_name
 PATTERN_RULES = _DEFAULT_SESSION.pattern_rules
@@ -261,6 +268,7 @@ def rule(
     config: ProvenanceConfig | None = None,
     context: bool | None = None,
     merge: bool | None = None,
+    strict: bool | None = None,
     session: Session | None = None,
 ):
     """Decorate a function as a build rule with automatic provenance.
@@ -293,6 +301,10 @@ def rule(
         merge (bool | None): When ``True``, buffer provenance for this rule and
             any nested rule calls, emitting a single merged document. Defaults
             to the configured merge behavior.
+        strict (bool | None): When ``True`` (the default), a failure to write
+            provenance raises :class:`~makeprov.prov.ProvenanceWriteError`
+            instead of only logging a warning. Overrides the configured
+            strict behavior when set.
         session (Session | None): Registry and buffer container to use instead
             of the process-wide default session. Passing a dedicated session
             isolates rules, commands, and provenance buffers from other runs.
@@ -399,6 +411,7 @@ def rule(
                 merge=merge if merge is not None else base_config.merge,
                 context=context if context is not None else base_config.context,
                 context_url=base_config.context_url,
+                strict=strict if strict is not None else base_config.strict,
             )
 
             in_files: list[Path] = []
@@ -552,6 +565,10 @@ def rule(
                             session=sess,
                         )
                 except Exception as prov_exc:  # noqa: BLE001
+                    if rule_config.strict:
+                        raise ProvenanceWriteError(
+                            f"Failed to write provenance for {logical_name!r}: {prov_exc}"
+                        ) from prov_exc
                     logging.warning(
                         "Failed to write provenance for %s: %s", logical_name, prov_exc
                     )

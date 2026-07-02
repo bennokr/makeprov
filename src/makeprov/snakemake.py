@@ -104,11 +104,29 @@ def _get_any(row: dict[str, str], *keys: str, default: str = "") -> str:
 
 
 def _split_files(cell: str) -> list[str]:
+    """Split a whitespace/comma separated cell from ``--detailed-summary``.
+
+    Snakemake's text summary has no way to distinguish a single filename that
+    contains whitespace from several filenames joined by whitespace. If the
+    whole cell already names an existing file, treat it as one file. If naive
+    splitting yields components where none exist as files (while the joined
+    cell isn't a real path either, so existence can't disambiguate it), raise
+    rather than silently emitting wrong provenance edges.
+    """
     cell = (cell or "").strip()
     if not cell or cell == "-":
         return []
-    parts = re.split(r"[,\s]+", cell)
-    return [part for part in (p.strip() for p in parts) if part and part != "-"]
+    if Path(cell).exists():
+        return [cell]
+    parts = [p for p in re.split(r"[,\s]+", cell) if p and p != "-"]
+    if len(parts) > 1 and not any(Path(p).exists() for p in parts):
+        raise ValueError(
+            f"Cannot unambiguously split snakemake summary cell into filenames: {cell!r}. "
+            "The text-based --detailed-summary format cannot represent filenames "
+            "containing whitespace without ambiguity. Avoid embedded whitespace in "
+            "tracked filenames when using the snakemake bridge."
+        )
+    return parts
 
 
 @dataclass(eq=False)
@@ -339,7 +357,7 @@ def build_prov_from_snakemake(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m makeprov.snakemake",
+        prog="makeprov-snakemake",
         description=(
             "Generate a makeprov PROV document from a Snakemake workflow via "
             "--d3dag and --detailed-summary."
