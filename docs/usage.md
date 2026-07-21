@@ -66,11 +66,28 @@ timestamps. These rules still participate in the CLI via {data}`makeprov.core.CO
 ## Command-line entry point
 
 The {func}`makeprov.config.main` helper exposes decorated rules as CLI
-subcommands using `defopt`. Any `--conf` options you pass are applied before the
-rules run, making it easy to tailor provenance behavior per invocation.
+subcommands using `defopt`, which is an optional dependency
+(`pip install "makeprov[cli]"`). Call it from your own script's
+`if __name__ == "__main__":` block — there is no `makeprov` console script,
+since the set of subcommands is defined by your rules, not by the library:
+
+```python
+# my_workflow.py
+from makeprov import InPath, OutPath, main, rule
+
+@rule()
+def uppercase(src: InPath, dest: OutPath):
+    dest.write_text(src.read_text().upper())
+
+if __name__ == "__main__":
+    main()
+```
+
+Any `--conf` options you pass are applied before the rules run, making it
+easy to tailor provenance behavior per invocation:
 
 ```bash
-python -m makeprov --conf @config/provenance.toml uppercase data/input.txt data/output.txt
+python my_workflow.py --conf @config/provenance.toml uppercase data/input.txt data/output.txt
 ```
 
 Combine `--verbose` flags to increase logging during command execution, or use
@@ -78,9 +95,9 @@ Combine `--verbose` flags to increase logging during command execution, or use
 rules:
 
 ```bash
-python -m makeprov -vv uppercase data/input.txt data/output.txt
-python -m makeprov --explain data/output.txt
-python -m makeprov --to-dot data/output.txt
+python my_workflow.py -vv uppercase data/input.txt data/output.txt
+python my_workflow.py --explain data/output.txt
+python my_workflow.py --to-dot data/output.txt
 ```
 
 ## Streaming input and output

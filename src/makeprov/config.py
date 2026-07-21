@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass, replace
 from typing import Literal, TYPE_CHECKING, ClassVar
-import sys, logging, tomllib as toml, defopt
+import sys, logging, tomllib as toml
 import argparse
 
 if TYPE_CHECKING:
@@ -71,6 +71,9 @@ class ProvenanceConfig(Config):
     frame: Frame = "provenance"
     context: bool = False
     context_url: str = "https://w3id.org/makeprov/context"
+    # When True (default), a failure to write provenance raises
+    # ProvenanceWriteError instead of only logging a warning.
+    strict: bool = True
 
 
 # initialize global
@@ -85,7 +88,19 @@ def main(
     session: "Session" | None = None,
     **kwargs,
 ):
-    """Entry point for running registered CLI subcommands."""
+    """Entry point for running registered CLI subcommands.
+
+    Requires the ``defopt`` package (install with ``pip install "makeprov[cli]"``),
+    imported lazily here so that ``import makeprov`` does not require it.
+    """
+
+    try:
+        import defopt
+    except ImportError as exc:
+        raise ImportError(
+            "makeprov.main() requires the 'defopt' package. "
+            'Install it with: pip install "makeprov[cli]"'
+        ) from exc
 
     from .core import COMMANDS, Session as CoreSession, _get_session
     from .core import build, build_all, explain, flush_prov_buffer, start_prov_buffer, to_dot

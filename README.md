@@ -1,17 +1,25 @@
 # makeprov: Pythonic Provenance Tracking
 
-This library provides a way to track file provenance in Python workflows using PROV (W3C Provenance) semantics. Decorators declare inputs and outputs, provenance is written automatically, and templated targets can be resolved on demand.
+`makeprov` is a small library for recording W3C PROV/JSON-LD provenance
+around Python functions that read and write files: which inputs produced
+which outputs, when, with what code and environment. A decorator wraps a
+function, tracks the files it declares as inputs/outputs, and writes a
+provenance record after each call. A minimal `make`-style dependency
+resolver and an optional Snakemake bridge are included, but the core
+contract of the library is the provenance record — not workflow
+orchestration, which tools like Snakemake already do well.
 
 ## Features
 
-- Use decorators to define rules for workflows.
-- Resolve templated targets (``results/{sample}.txt``) via ``parse``-style patterns.
-- Support phony/meta rules for orchestration alongside file-producing rules.
-- Automatically generate RDF-based provenance metadata (`rdflib` optional).
-- Handles input and output streams.
-- Integrates with Python's type hints for easy configuration.
-- Outputs provenance data in TRIG format if `rdflib` is installed; otherwise outputs json-ld.
-- Optional Snakemake CLI integration that turns `--d3dag` and `--detailed-summary`
+- Decorator-based rules that infer dependencies from `InPath`/`OutPath`
+  parameters and write a PROV/JSON-LD record after every call.
+- Provenance write failures are fatal by default (`ProvenanceConfig(strict=True)`),
+  so a rule can't silently "succeed" with no record of what it did.
+- Resolve templated targets (``results/{sample}.txt``) via ``parse``-style patterns,
+  and a small dependency resolver (`build`/`build_all`) for chaining rules.
+- Serialize provenance as JSON-LD, or as RDF/TriG when `rdflib` is installed
+  (`pip install "makeprov[rdf]"`).
+- Optional Snakemake bridge that turns `--d3dag` and `--detailed-summary`
   output into PROV JSON-LD artifacts ready for inclusion in Snakemake HTML reports.
 
 ## Installation
@@ -22,10 +30,12 @@ You can install the module directly from PyPI:
 pip install makeprov
 ```
 
-Install the Snakemake extra if you want to use the CLI bridge:
+Optional extras add RDF/TriG export, CLI subcommand support, or the Snakemake bridge:
 
 ```bash
-pip install "makeprov[snakemake]"
+pip install "makeprov[rdf]"        # rdflib + pyshacl for RDF/TriG export
+pip install "makeprov[cli]"        # defopt, needed for makeprov.main()
+pip install "makeprov[snakemake]"  # the makeprov-snakemake bridge
 ```
 
 ## Usage
@@ -133,13 +143,17 @@ python examples/context_demo_example.py build-all
 
 ### Snakemake workflows
 
-`makeprov` ships with an optional subcommand that shells out to Snakemake and
-converts the job DAG together with ``--detailed-summary`` metadata into a PROV
-document. The CLI mirrors the familiar configuration flags from
-`makeprov.config` and writes JSON-LD by default.
+Install the `snakemake` extra (`pip install "makeprov[snakemake]"`) to get the
+`makeprov-snakemake` command, which shells out to Snakemake and converts the
+job DAG together with ``--detailed-summary`` metadata into a PROV document.
+It mirrors the familiar configuration flags from `makeprov.config` and writes
+JSON-LD by default. Note this is a best-effort bridge: it parses Snakemake's
+human-oriented text output, so treat it as a convenience for reports rather
+than an authoritative source of truth — it will raise rather than guess when
+it can't unambiguously parse a filename (e.g. one containing whitespace).
 
 ```bash
-python -m makeprov.snakemake --prov-path prov/snakemake -- --snakefile Snakefile --nolock
+makeprov-snakemake --prov-path prov/snakemake -- --snakefile Snakefile --nolock
 ```
 
 Wire the resulting file into a report by marking it with Snakemake’s
@@ -153,7 +167,7 @@ rule provenance:
         "prov/snakemake.json"
     shell:
         (
-            "python -m makeprov.snakemake "
+            "makeprov-snakemake "
             "--prov-path prov/snakemake "
             "--out-fmt json --context --frame provenance "
             "-- "
@@ -173,6 +187,11 @@ You can customize the provenance tracking with the following options:
  - `prov_dir` (str): Directory for writing PROV `.json-ld` or `.trig` files
  - `force` (bool): Force running of dependencies
  - `dry_run` (bool): Only check workflow, don't run anything
+ - `strict` (bool, default `True`): Raise `makeprov.ProvenanceWriteError` if a
+   rule's provenance record fails to write, instead of only logging a
+   warning. A rule that produces a result but no provenance record is
+   treated as a failure by default; set `strict=False` to opt out per-rule
+   or globally.
 
 ### Scoped spans and cached downloads
 

@@ -4,42 +4,46 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "makeprov"
-version = "0.4.6"
-description = "An provenance tracking library for simple Python workflows"
+version = "0.5.0"
+description = "A PROV/JSON-LD provenance tracking library for Python scripts, with an optional Snakemake bridge"
 readme = "README.md"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Benno Kruit", email = "b.b.kruit@amsterdamumc.nl" }]
-keywords = ["provenance", "prov", "workflow", "python"]
+keywords = ["provenance", "prov", "rdf", "json-ld", "snakemake"]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 dependencies = ["parse>=1.20"]
 
 [project.optional-dependencies]
-snakemake = [
-    "snakemake"
-]
-dev = [
-    "defopt>=6",
-    "pytest",
-    "rdflib>=6.0",
-    "pyshacl>=0.20"
-]
+# W3C PROV/RDF export via rdflib and SHACL validation.
+rdf = ["rdflib>=6.0", "pyshacl>=0.20"]
+# Convert a Snakemake run's --d3dag/--detailed-summary output into PROV.
+snakemake = ["snakemake"]
+# `makeprov.config.main()`'s argument parsing for exposing rules as a CLI.
+cli = ["defopt>=6"]
+dev = ["pytest", "makeprov[rdf,cli]"]
 docs = [
     "sphinx>=7",
     "myst-parser[linkify]",
     "sphinx-rtd-theme",
     "sphinx-autodoc-typehints",
-    "defopt>=6",
-    "tomli; python_version<'3.11'",
+    "makeprov[cli]",
 ]
 
 [project.urls]
 "Homepage" = "https://github.com/bennokr/makeprov"
 "Documentation" = "https://bennokr.github.io/makeprov"
 "Issue Tracker" = "https://github.com/bennokr/makeprov/issues"
+
+[project.scripts]
+makeprov-snakemake = "makeprov.snakemake:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
