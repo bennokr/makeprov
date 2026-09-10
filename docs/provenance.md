@@ -16,7 +16,10 @@ it out, and makeprov follows that split:
 - {class}`~makeprov.prov.AgentNode` — the Python runtime that executed it,
   typed ``prov:SoftwareAgent``.
 - {class}`~makeprov.prov.PersonNode` — the user, taken from ``git config
-  user.name``/``user.email`` when available, typed ``schema:Person``.
+  user.name``/``user.email``, typed ``schema:Person``. Opt in with
+  ``ProvenanceConfig(record_user=True)``; it is off by default because
+  provenance documents are routinely committed and published. Without it the
+  association names the runtime as the responsible agent.
 - {class}`~makeprov.prov.AssociationNode` — a ``prov:Association`` tying the
   agent to the plan via ``prov:agent`` and ``prov:hadPlan``, referenced from the
   activity's ``prov:qualifiedAssociation``.

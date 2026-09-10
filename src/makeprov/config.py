@@ -77,6 +77,11 @@ class ProvenanceConfig(Config):
     # Externally supplied run identity (a CI job id, an MLflow run id). When
     # unset, each run gets a fresh unique id.
     run_id: str | None = None
+    # Record the invoking user (from git config) as a schema:Person agent.
+    # Off by default: provenance files are routinely committed and published,
+    # and a name and email address are personal data the caller should opt into
+    # publishing rather than emit by accident.
+    record_user: bool = False
 
 
 # initialize global

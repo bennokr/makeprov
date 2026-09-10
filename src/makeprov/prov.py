@@ -317,6 +317,7 @@ class Prov:
         outputs: list[ArtifactRef],
         results: list[RDFMixin],
         success: bool = True,
+        record_user: bool = False,
     ):
         """Assemble a provenance graph from rule execution details.
 
@@ -332,6 +333,9 @@ class Prov:
             results (list[RDFMixin]): Optional result graphs to embed alongside
                 provenance records.
             success (bool): Whether the rule completed successfully.
+            record_user (bool): Record the invoking user from ``git config`` as
+                a ``schema:Person`` agent. Off by default, since provenance
+                documents are routinely committed and published.
 
         Returns:
             Prov: A populated :class:`Prov` instance ready for serialization.
@@ -413,11 +417,12 @@ class Prov:
             hasVersion=py_version,
         ))
 
-        # Agent: the person who ran it, when git can tell us. This is the slot
-        # Workflow Run RO-Crate's `agent` expects (a Person, not software).
+        # Agent: the person who ran it, when git can tell us and the caller
+        # opted in. This is the slot Workflow Run RO-Crate's `agent` expects
+        # (a Person, not software).
         person: PersonNode | None = None
-        user_name = _safe_cmd(["git", "config", "--get", "user.name"])
-        user_email = _safe_cmd(["git", "config", "--get", "user.email"])
+        user_name = _safe_cmd(["git", "config", "--get", "user.name"]) if record_user else None
+        user_email = _safe_cmd(["git", "config", "--get", "user.email"]) if record_user else None
         if user_name or user_email:
             person = _apply_context(PersonNode(
                 id=f"mailto:{user_email}" if user_email else _iri("agent-user"),

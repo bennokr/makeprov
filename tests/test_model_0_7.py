@@ -83,7 +83,7 @@ def test_qualified_association_links_agent_to_plan(monkeypatch):
     assert activity.qualifiedAssociation == assoc.id
 
 
-def test_person_agent_from_git_config(monkeypatch):
+def _git_identity(monkeypatch):
     responses = {
         "git config --get user.name": "Ada Lovelace",
         "git config --get user.email": "ada@example.org",
@@ -92,7 +92,11 @@ def test_person_agent_from_git_config(monkeypatch):
         prov_mod, "_safe_cmd", lambda argv: responses.get(" ".join(argv))
     )
 
-    prov = _create()
+
+def test_person_agent_recorded_when_opted_in(monkeypatch):
+    _git_identity(monkeypatch)
+
+    prov = _create(record_user=True)
     (person,) = _only(prov, PersonNode)
 
     assert person.id == "mailto:ada@example.org"
@@ -100,9 +104,32 @@ def test_person_agent_from_git_config(monkeypatch):
     assert "schema:Person" in person.type
 
 
+def test_person_is_opt_in(monkeypatch):
+    """A git identity alone must not put personal data in the document."""
+
+    _git_identity(monkeypatch)
+
+    prov = _create()
+    assert _only(prov, PersonNode) == []
+
+    serialized = str(prov.to_jsonld())
+    assert "ada@example.org" not in serialized
+    assert "Ada Lovelace" not in serialized
+
+
+def test_association_agent_falls_back_to_runtime(monkeypatch):
+    _git_identity(monkeypatch)
+
+    prov = _create()
+    (assoc,) = _only(prov, AssociationNode)
+    (agent,) = _only(prov, AgentNode)
+
+    assert assoc.agent == agent.id
+
+
 def test_no_person_node_without_git_identity(monkeypatch):
     monkeypatch.setattr(prov_mod, "_safe_cmd", lambda argv: None)
-    assert _only(_create(), PersonNode) == []
+    assert _only(_create(record_user=True), PersonNode) == []
 
 
 def test_external_ref_recorded_without_touching_filesystem(monkeypatch):

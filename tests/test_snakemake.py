@@ -6,7 +6,14 @@ from pathlib import Path
 import pytest
 
 from makeprov.config import ProvenanceConfig
-from makeprov.prov import ActivityNode, AgentNode, FileEntity
+from makeprov.prov import (
+    ActivityNode,
+    AgentNode,
+    AssociationNode,
+    FileEntity,
+    PersonNode,
+    PlanNode,
+)
 from makeprov import snakemake as smk
 
 
@@ -35,6 +42,65 @@ def test_extract_json_blob_with_leading_noise():
     payload = '{"nodes": [], "links": []}'
     noisy = "INFO Running something\n" + payload + "\n"
     assert smk._extract_json_blob(noisy) == json.loads(payload)
+
+
+def _minimal_workflow():
+    dag = {"nodes": [{"id": 1, "value": {"rule": "concat"}}], "links": []}
+    summary = [
+        {
+            "rule": "concat",
+            "version": "-",
+            "input-file(s)": "a.txt",
+            "output_file": "out.txt",
+            "shellcmd": "cat {input} > {output}",
+            "status": "finished",
+            "plan": "shell",
+        }
+    ]
+    return dag, summary
+
+
+def test_snakemake_rules_become_plans(monkeypatch):
+    """The bridge uses the same Plan/Agent split as the decorator API."""
+
+    monkeypatch.setattr(smk, "_safe_cmd", lambda argv: "7.32.0")
+    dag, summary = _minimal_workflow()
+
+    prov = smk.build_prov_from_snakemake(dag, summary, config=ProvenanceConfig())
+
+    (plan,) = [n for n in prov.provenance if isinstance(n, PlanNode)]
+    assert "prov:Plan" in plan.type
+    assert plan.label == "concat"
+
+    (agent,) = [n for n in prov.provenance if isinstance(n, AgentNode)]
+    assert "prov:SoftwareAgent" in agent.type
+    assert "schema:SoftwareSourceCode" not in agent.type
+
+    (assoc,) = [n for n in prov.provenance if isinstance(n, AssociationNode)]
+    activity = next(n for n in prov.provenance if isinstance(n, ActivityNode))
+    assert assoc.hadPlan == plan.id
+    assert assoc.agent == agent.id
+    assert activity.qualifiedAssociation == assoc.id
+
+
+def test_snakemake_person_is_opt_in(monkeypatch):
+    responses = {
+        "snakemake --version": "7.32.0",
+        "git config --get user.name": "Ada Lovelace",
+        "git config --get user.email": "ada@example.org",
+    }
+    monkeypatch.setattr(smk, "_safe_cmd", lambda argv: responses.get(" ".join(argv)))
+    dag, summary = _minimal_workflow()
+
+    default = smk.build_prov_from_snakemake(dag, summary, config=ProvenanceConfig())
+    assert [n for n in default.provenance if isinstance(n, PersonNode)] == []
+    assert "ada@example.org" not in str(default.to_jsonld())
+
+    opted_in = smk.build_prov_from_snakemake(
+        dag, summary, config=ProvenanceConfig(record_user=True)
+    )
+    (person,) = [n for n in opted_in.provenance if isinstance(n, PersonNode)]
+    assert person.id == "mailto:ada@example.org"
 
 
 def test_build_prov_from_snakemake_generates_edges(monkeypatch, tmp_path: Path):

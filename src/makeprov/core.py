@@ -444,6 +444,7 @@ def rule(
                 context_url=base_config.context_url,
                 strict=strict if strict is not None else base_config.strict,
                 run_id=base_config.run_id,
+                record_user=base_config.record_user,
             )
 
             in_files: list[Path] = []
@@ -574,6 +575,7 @@ def rule(
                         outputs=[_path_ref(p) for p in out_files],
                         results=results,
                         success=exc is None,
+                        record_user=rule_config.record_user,
                     )
                     if prov_path is not None:
                         rule_prov_path = prov_path

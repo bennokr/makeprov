@@ -35,7 +35,7 @@ makeprov keeps PROV's distinction between the *plan* (the recipe) and the
 ```text
 run.py @ git SHA          a prov:Plan, schema:SoftwareSourceCode
 CPython 3.11              a prov:Agent, prov:SoftwareAgent
-you (from git config)     a prov:Agent, schema:Person
+you (opt-in)              a prov:Agent, schema:Person
 
 train-20260910T…-c2f6dc7b a prov:Activity
     prov:used                  dataset-X, the Python environment
@@ -60,6 +60,13 @@ Organization) are separate slots:
 | `prov:wasGeneratedBy`    | `result`          |
 | `schema:Person` agent    | `agent`           |
 | `startedAtTime`/`endedAtTime` | `startTime`/`endTime` |
+
+The `schema:Person` agent is **off by default**: provenance documents are
+routinely committed and published, and a name and email address are personal
+data you should choose to publish rather than emit by accident. Turn it on with
+`ProvenanceConfig(record_user=True)`, or `--record-user` on the Snakemake
+bridge. Without it, the qualified association names the runtime as the
+responsible agent.
 
 Note that WRROC is Schema.org-native and defines no normative PROV-O mapping;
 the table above is a practical alignment, not an OWL equivalence. makeprov's
@@ -263,6 +270,9 @@ You can customize the provenance tracking with the following options:
    or globally.
  - `run_id` (str | None): Adopt an externally supplied run identity, such as a
    CI job id. When unset, each run gets a fresh unique id.
+ - `record_user` (bool, default `False`): Record the invoking user, taken from
+   `git config user.name`/`user.email`, as a `schema:Person` agent. Off by
+   default so personal data isn't published by accident.
 
 ### Upgrading to 0.7
 
@@ -285,6 +295,9 @@ graph differs:
   *inputs* are recorded without content metadata and logged, rather than
   disappearing.
 - `Prov.create()` takes `list[ArtifactRef]` instead of `list[Path]`.
+- The Snakemake bridge follows the same model: each rule is now a `prov:Plan`
+  at `urn:snakemake:rule/<name>`, and each job activity carries a
+  `prov:qualifiedAssociation`. Its agent node gained `schema:SoftwareApplication`.
 
 ### Scoped spans and cached downloads
 

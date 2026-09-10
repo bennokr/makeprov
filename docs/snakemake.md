@@ -97,6 +97,17 @@ job-to-job edges are recorded using `prov:wasInformedBy` whenever Snakemake's
 D3 DAG provides the necessary IDs. File metadata such as hashes, MIME types and
 timestamps are captured from the filesystem when available.
 
+The bridge uses the same Plan/Agent split as the decorator API. Each Snakemake
+*rule* becomes a `prov:Plan` (`urn:snakemake:rule/<name>`), Snakemake itself is
+the `prov:SoftwareAgent`, and every job activity carries a
+`prov:qualifiedAssociation` tying the agent to the rule it executed. The shell
+command stays on the activity rather than the plan, since `--detailed-summary`
+may report it after wildcard expansion, making it a property of that particular
+run rather than of the recipe.
+
+Pass `--record-user` to additionally record the git user as a `schema:Person`
+agent; as in the decorator API this is off by default.
+
 Use the standard `makeprov` serialization helpers to post-process the output:
 
 ```python

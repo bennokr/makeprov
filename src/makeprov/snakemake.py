@@ -15,7 +15,10 @@ from .prov import (
     COMMON_CONTEXT,
     ActivityNode,
     AgentNode,
+    AssociationNode,
     FileEntity,
+    PersonNode,
+    PlanNode,
     Prov,
     _path_info,
     _safe_cmd,
@@ -242,11 +245,30 @@ def build_prov_from_snakemake(
     smk_version = _safe_cmd(["snakemake", "--version"])
     agent = AgentNode(
         id=f"{base}agent/snakemake",
-        type=("prov:Agent", "prov:SoftwareAgent"),
+        type=("prov:Agent", "prov:SoftwareAgent", "schema:SoftwareApplication"),
         label="snakemake",
         hasVersion=smk_version or None,
         source=None,
     )
+
+    # Same opt-in as the decorator API: a name and email address are personal
+    # data, not something to emit into a published document by accident.
+    person: PersonNode | None = None
+    if config.record_user:
+        user_name = _safe_cmd(["git", "config", "--get", "user.name"])
+        user_email = _safe_cmd(["git", "config", "--get", "user.email"])
+        if user_name or user_email:
+            person = PersonNode(
+                id=f"mailto:{user_email}" if user_email else f"{base}agent/user",
+                type=("prov:Agent", "prov:Person", "schema:Person"),
+                name=user_name or None,
+                email=user_email or None,
+            )
+
+    responsible_agent = person.id if person is not None else agent.id
+
+    def rule_plan_id(rule: str) -> str:
+        return f"{base}rule/{rule}"
 
     jobid_to_rule, d3_edges = _index_d3dag(dag)
     jobids_by_rule: dict[str, list[int]] = {}
@@ -294,7 +316,21 @@ def build_prov_from_snakemake(
         entity._extra["label"] = file_path
         file_entities[file_path] = entity
 
+    # Each Snakemake rule is the plan its jobs carry out. The shell command
+    # stays on the activity rather than the plan: --detailed-summary may report
+    # it post-expansion, so it describes a particular run, not the recipe.
+    plans: dict[str, PlanNode] = {}
+    for rule in sorted(groups_by_rule):
+        plan = PlanNode(
+            id=rule_plan_id(rule),
+            type=("prov:Plan", "prov:Entity", "schema:SoftwareSourceCode"),
+            label=rule,
+        )
+        plan._extra["snakemake:rule"] = rule
+        plans[rule] = plan
+
     activities: dict[str, ActivityNode] = {}
+    associations: list[AssociationNode] = []
     group_to_act_id: dict[_JobGroup, str] = {}
 
     for group in groups:
@@ -306,12 +342,23 @@ def build_prov_from_snakemake(
         group_to_act_id[group] = activity_id
 
         used_ids = [file_id(inp) for inp in group.inputs]
+        association = AssociationNode(
+            id=f"{activity_id}-association",
+            type="prov:Association",
+            agent=responsible_agent,
+            hadPlan=rule_plan_id(group.rule),
+        )
+        associations.append(association)
+
         activity = ActivityNode(
             id=activity_id,
             type="prov:Activity",
             startedAtTime=None,
             endedAtTime=None,
-            wasAssociatedWith=agent.id,
+            wasAssociatedWith=(
+                (agent.id, person.id) if person is not None else agent.id
+            ),
+            qualifiedAssociation=association.id,
             used=tuple(used_ids) if used_ids else None,
             comment=None,
         )
@@ -350,7 +397,14 @@ def build_prov_from_snakemake(
     return Prov(
         base_iri=config.base_iri or "",
         name=name,
-        provenance=[agent, *activities.values(), *file_entities.values()],
+        provenance=[
+            agent,
+            *([person] if person is not None else []),
+            *plans.values(),
+            *associations,
+            *activities.values(),
+            *file_entities.values(),
+        ],
         results=[],
     )
 
@@ -402,6 +456,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Embed JSON-LD context inline.",
     )
     parser.add_argument(
+        "--record-user",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Record the git user as a schema:Person agent (off by default).",
+    )
+    parser.add_argument(
         "--snakemake",
         default="snakemake",
         help="Snakemake executable.",
@@ -437,6 +497,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg.frame = namespace.frame  # type: ignore[assignment]
     if namespace.context is not None:
         cfg.context = namespace.context
+    if namespace.record_user is not None:
+        cfg.record_user = namespace.record_user
 
     smk_args = list(namespace.snakemake_args)
     if smk_args and smk_args[0] == "--":
