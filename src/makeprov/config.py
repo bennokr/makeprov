@@ -74,6 +74,9 @@ class ProvenanceConfig(Config):
     # When True (default), a failure to write provenance raises
     # ProvenanceWriteError instead of only logging a warning.
     strict: bool = True
+    # Externally supplied run identity (a CI job id, an MLflow run id). When
+    # unset, each run gets a fresh unique id.
+    run_id: str | None = None
 
 
 # initialize global

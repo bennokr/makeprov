@@ -5,6 +5,37 @@ that describe the activity, inputs, outputs, environment, and results. The
 library supports JSON-LD and TriG outputs, aligning with the W3C PROV data
 model.
 
+## Plans, agents and activities
+
+PROV separates the *plan* an activity carried out from the *agent* that carried
+it out, and makeprov follows that split:
+
+- {class}`~makeprov.prov.PlanNode` — the calling script at a git commit, typed
+  ``prov:Plan`` and ``schema:SoftwareSourceCode``. This is prospective
+  provenance: the recipe.
+- {class}`~makeprov.prov.AgentNode` — the Python runtime that executed it,
+  typed ``prov:SoftwareAgent``.
+- {class}`~makeprov.prov.PersonNode` — the user, taken from ``git config
+  user.name``/``user.email`` when available, typed ``schema:Person``.
+- {class}`~makeprov.prov.AssociationNode` — a ``prov:Association`` tying the
+  agent to the plan via ``prov:agent`` and ``prov:hadPlan``, referenced from the
+  activity's ``prov:qualifiedAssociation``.
+
+Before 0.7 a single node was simultaneously ``prov:SoftwareAgent`` and
+``schema:SoftwareSourceCode``, which left no distinct slot for the plan and made
+the graph unmappable onto profiles that separate the two.
+
+## Artifact references
+
+Inputs and outputs are described by {class}`~makeprov.refs.ArtifactRef`. A
+*local* ref is stat-ed and hashed off disk; an *external* ref records a stable
+IRI and is never resolved against the filesystem, which is how a run cites a
+remote dataset or model checkpoint without copying its metadata.
+
+A declared output that is missing after a successful run raises
+{class}`~makeprov.prov.UnresolvedArtifactError`; a missing input is recorded
+without content metadata and logged. Neither case silently drops the entity.
+
 ## JSON-LD structure
 
 When ``out_fmt`` is set to ``"json"``, the resulting file contains a top-level

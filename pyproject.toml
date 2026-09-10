@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "makeprov"
-version = "0.5.0"
+version = "0.7.0"
 description = "A PROV/JSON-LD provenance tracking library for Python scripts, with an optional Snakemake bridge"
 readme = "README.md"
 requires-python = ">=3.11"

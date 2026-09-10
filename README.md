@@ -13,6 +13,11 @@ orchestration, which tools like Snakemake already do well.
 
 - Decorator-based rules that infer dependencies from `InPath`/`OutPath`
   parameters and write a PROV/JSON-LD record after every call.
+- A clean `Plan → Run → Artifact` model: the script at a commit is a
+  `prov:Plan`, the runtime and the user are agents, and the two are tied
+  together by `prov:qualifiedAssociation`/`prov:hadPlan`.
+- `ArtifactRef` lets a run cite external entities — a dataset IRI, an
+  object-store key, a model checkpoint — without makeprov copying their metadata.
 - Provenance write failures are fatal by default (`ProvenanceConfig(strict=True)`),
   so a rule can't silently "succeed" with no record of what it did.
 - Resolve templated targets (``results/{sample}.txt``) via ``parse``-style patterns,
@@ -21,6 +26,70 @@ orchestration, which tools like Snakemake already do well.
   (`pip install "makeprov[rdf]"`).
 - Optional Snakemake bridge that turns `--d3dag` and `--detailed-summary`
   output into PROV JSON-LD artifacts ready for inclusion in Snakemake HTML reports.
+
+## The provenance model
+
+makeprov keeps PROV's distinction between the *plan* (the recipe) and the
+*agent* (whoever carried it out):
+
+```text
+run.py @ git SHA          a prov:Plan, schema:SoftwareSourceCode
+CPython 3.11              a prov:Agent, prov:SoftwareAgent
+you (from git config)     a prov:Agent, schema:Person
+
+train-20260910T…-c2f6dc7b a prov:Activity
+    prov:used                  dataset-X, the Python environment
+    prov:wasAssociatedWith     runtime, person
+    prov:qualifiedAssociation  [ prov:agent person ; prov:hadPlan run.py ]
+
+results/model.txt         a prov:Entity
+    prov:wasGeneratedBy        train-20260910T…-c2f6dc7b
+    dct:identifier             sha256:…
+```
+
+Keeping the plan and the agent apart is what makes the graph mappable onto
+[Workflow Run RO-Crate](https://www.researchobject.org/workflow-run-crate/),
+whose `instrument` (the software that was run) and `agent` (a Person or
+Organization) are separate slots:
+
+| makeprov / PROV-O        | Process Run Crate |
+| ------------------------ | ----------------- |
+| `prov:Plan`              | `instrument`      |
+| `prov:Activity`          | `CreateAction`    |
+| `prov:used`              | `object`          |
+| `prov:wasGeneratedBy`    | `result`          |
+| `schema:Person` agent    | `agent`           |
+| `startedAtTime`/`endedAtTime` | `startTime`/`endTime` |
+
+Note that WRROC is Schema.org-native and defines no normative PROV-O mapping;
+the table above is a practical alignment, not an OWL equivalence. makeprov's
+own vocabulary stays `prov:`/`schema:` — RO-Crate and OpenLineage are intended
+as adapters over this model rather than changes to it.
+
+## Referencing things that aren't local files
+
+`ArtifactRef` describes an entity a run consumed or produced. It is either
+*local* (makeprov stats and hashes it) or *external* (makeprov records the IRI
+and never touches the filesystem):
+
+```python
+from makeprov import ArtifactRef, OutPath, rule
+
+@rule()
+def train(
+    dataset: ArtifactRef = ArtifactRef.external(
+        "https://example.org/datasets/train-v17",
+        types=("prov:Entity", "schema:Dataset"),
+        digest="sha256:...",
+    ),
+    model: OutPath = OutPath("models/m.pkl"),
+):
+    ...
+```
+
+The external object keeps its own detailed metadata; makeprov only records that
+this run used its stable IRI. External refs take no part in staleness checks,
+since they have no local mtime to compare.
 
 ## Installation
 
@@ -192,6 +261,30 @@ You can customize the provenance tracking with the following options:
    warning. A rule that produces a result but no provenance record is
    treated as a failure by default; set `strict=False` to opt out per-rule
    or globally.
+ - `run_id` (str | None): Adopt an externally supplied run identity, such as a
+   CI job id. When unset, each run gets a fresh unique id.
+
+### Upgrading to 0.7
+
+0.7 changes the provenance model. The decorator API is unchanged — existing
+`@rule` functions using `InPath`/`OutPath` keep working — but the emitted
+graph differs:
+
+- The script is no longer a `prov:SoftwareAgent`. It is a `prov:Plan`, reached
+  from the activity via `prov:qualifiedAssociation`/`prov:hadPlan`. Consumers
+  that looked for `prov:wasAssociatedWith` to find the script should follow
+  `prov:hadPlan` instead.
+- Outputs now carry a `sha256` content digest. Previously the digest was
+  computed and then discarded for outputs.
+- Entity IRIs derived from a GitHub remote are pinned to the **commit** rather
+  than the branch, so an IRI no longer denotes different bytes after each push.
+- Run identifiers include seconds and a random suffix. Minute-resolution ids
+  meant two runs of the same rule in one minute shared an activity IRI.
+- A declared output that is missing after a successful run now raises
+  `UnresolvedArtifactError` instead of being dropped from the graph. Missing
+  *inputs* are recorded without content metadata and logged, rather than
+  disappearing.
+- `Prov.create()` takes `list[ArtifactRef]` instead of `list[Path]`.
 
 ### Scoped spans and cached downloads
 

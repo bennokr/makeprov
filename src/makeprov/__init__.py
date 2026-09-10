@@ -20,14 +20,17 @@ from .core import (
     rule,
     to_dot,
 )
-from .prov import ProvenanceWriteError
+from .prov import ProvenanceWriteError, UnresolvedArtifactError
 from .rdfmixin import RDFMixin
+from .refs import ArtifactRef
 from .span import span
 
 __all__ = [
+    "ArtifactRef",
     "Config",
     "ProvenanceConfig",
     "ProvenanceWriteError",
+    "UnresolvedArtifactError",
     "main",
     "ProvPath",
     "InPath",
