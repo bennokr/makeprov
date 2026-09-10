@@ -28,6 +28,17 @@ Before 0.7 a single node was simultaneously ``prov:SoftwareAgent`` and
 ``schema:SoftwareSourceCode``, which left no distinct slot for the plan and made
 the graph unmappable onto profiles that separate the two.
 
+## Prospective structure
+
+By default a document is retrospective only: it records activities that ran, and
+a rule that was already up to date contributes nothing. Setting
+``emit_plan_graph`` (CLI ``--plan-graph``) additionally emits each rule as its
+own {class}`~makeprov.prov.PlanNode`, linked to the plans it depends on by
+``dct:requires``, and points the activity's ``prov:hadPlan`` at that rule rather
+than at the whole script. The dependency edges come from the same resolver
+:func:`~makeprov.core.build` uses, so the prospective structure agrees with what
+would actually be built.
+
 ## Artifact references
 
 Inputs and outputs are described by {class}`~makeprov.refs.ArtifactRef`. A

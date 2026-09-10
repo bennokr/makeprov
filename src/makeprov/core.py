@@ -13,7 +13,7 @@ from parse import compile as parse_compile, Parser
 
 from .config import ProvenanceConfig, ProvFormat, Frame
 from .paths import CachedDownload, InDir, InPath, OutDir, OutPath
-from .prov import Prov, ProvenanceWriteError
+from .prov import PlanGraph, Prov, ProvenanceWriteError
 from .rdfmixin import RDFMixin
 from .refs import ArtifactRef
 
@@ -231,11 +231,32 @@ def _path_ref(path: Path) -> ArtifactRef:
 
     extra: dict[str, Any] = {}
     if isinstance(path, CachedDownload):
-        extra[path.transform] = path.url
-        extra.setdefault("rdfs:seeAlso", path.url)
+        # As {"@id": ...}, not a bare string: prov:wasDerivedFrom and
+        # rdfs:seeAlso both range over resources, so a plain string would
+        # serialize as a literal and the link would not be traversable.
+        extra[path.transform] = {"@id": path.url}
+        extra.setdefault("rdfs:seeAlso", {"@id": path.url})
         if path.headers:
             extra["comment"] = f"download headers={path.headers}"
     return ArtifactRef.local(path, extra=extra)
+
+
+def _plan_graph(rule_name: str, inputs: list[Path], session: Session) -> PlanGraph:
+    """Describe the executing rule and the rules producing its inputs.
+
+    Uses the same resolver as :func:`build`, so the prospective structure agrees
+    with what would actually be built.
+    """
+
+    requires: list[str] = []
+    for path in inputs:
+        try:
+            upstream, _ = resolve_target(str(path), session=session)
+        except RuntimeError:
+            continue  # not produced by a rule: a source file, not a step
+        if upstream.name != rule_name and upstream.name not in requires:
+            requires.append(upstream.name)
+    return PlanGraph(rule=rule_name, requires=tuple(requires))
 
 
 def _run_id(config: ProvenanceConfig, t0: datetime) -> str:
@@ -445,6 +466,8 @@ def rule(
                 strict=strict if strict is not None else base_config.strict,
                 run_id=base_config.run_id,
                 record_user=base_config.record_user,
+                forge_profiles=base_config.forge_profiles,
+                emit_plan_graph=base_config.emit_plan_graph,
             )
 
             in_files: list[Path] = []
@@ -576,6 +599,12 @@ def rule(
                         results=results,
                         success=exc is None,
                         record_user=rule_config.record_user,
+                        forge_profiles=rule_config.forge_profiles,
+                        plan_graph=(
+                            _plan_graph(logical_name, in_files, sess)
+                            if rule_config.emit_plan_graph
+                            else None
+                        ),
                     )
                     if prov_path is not None:
                         rule_prov_path = prov_path

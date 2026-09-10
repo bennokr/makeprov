@@ -12,9 +12,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional, TypeAlias
+from urllib.parse import quote
 
 from .rdfmixin import RDFMixin
 from .config import Frame
+from .forges import load_forges, resolve_forge
 from .refs import ArtifactRef
 
 
@@ -61,6 +63,7 @@ class ActivityNode(BaseNode):
     wasAssociatedWith: AgentNode | JSONLDRef | None = None
     qualifiedAssociation: AssociationNode | JSONLDRef | None = None
     used: tuple[FileEntity | JSONLDRef] | None = None
+    generated: tuple[JSONLDRef, ...] | None = None
     comment: Optional[str] = None
 
 
@@ -84,6 +87,9 @@ class PlanNode(BaseNode):
     label: str | None = None
     hasVersion: str | None = None
     source: str | None = None
+    # Prospective structure: plans this plan depends on. Populated only when
+    # emit_plan_graph is enabled.
+    requires: tuple[str, ...] | None = None
 
 
 @dataclass(unsafe_hash=True)
@@ -111,6 +117,9 @@ class FileEntity(BaseNode):
     extent: int | None = None
     modified: datetime | None = None
     identifier: str | None = None
+    # Bare hex alongside the algorithm-qualified `identifier`, so a consumer can
+    # read the checksum without parsing a prefix out of an opaque string.
+    sha256: str | None = None
     wasGeneratedBy: ActivityNode | JSONLDRef | None = None
 
 
@@ -306,6 +315,18 @@ def apply_context(node: RDFMixin, context: dict) -> RDFMixin:
 
 
 @dataclass(frozen=True)
+class PlanGraph:
+    """Prospective structure for one rule: its name and the rules it needs.
+
+    Kept separate from the retrospective record so a document can state what
+    the workflow *is* without asserting that any of it ran.
+    """
+
+    rule: str
+    requires: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class IriMinter:
     """Mints the identifiers for one provenance document.
 
@@ -340,6 +361,16 @@ class IriMinter:
         return f"blob:{path.as_posix()}"
 
 
+def working_tree_is_dirty() -> bool:
+    """Whether the checkout has uncommitted changes.
+
+    Matters because a commit SHA recorded next to a dirty tree describes code
+    that is not what actually ran.
+    """
+
+    return bool(_safe_cmd(["git", "status", "--porcelain"]))
+
+
 def resolve_iris(
     base_iri: str | None,
     context: dict,
@@ -347,18 +378,19 @@ def resolve_iris(
     file_segment: str = "",
     origin: str | None = None,
     revision: str | None = None,
+    forge_profiles: str | None = None,
 ) -> IriMinter:
     """Decide how a document's identifiers are minted.
 
-    An explicit ``base_iri`` is used as-is. Failing that, a GitHub remote makes
-    the repository URL the document's ``@base`` and pins file identifiers to the
-    current commit through a ``blob:`` prefix — pinning to the commit rather
-    than the branch matters, since a branch URL names different bytes after
-    every push. With neither, identifiers stay relative to the document, which
-    is preferable to inventing a namespace that would collide across unrelated
-    workflows.
+    An explicit ``base_iri`` is used as-is. Failing that, a remote on a known
+    forge (see ``forges.toml``) makes the repository URL the document's
+    ``@base`` and pins file identifiers to the current commit through a
+    ``blob:`` prefix — pinning to the commit rather than the branch matters,
+    since a branch URL names different bytes after every push. With neither,
+    identifiers stay relative to the document, which is preferable to inventing
+    a namespace that would collide across unrelated workflows.
 
-    ``context`` is mutated in place when the git heuristic applies. ``origin``
+    ``context`` is mutated in place when the forge heuristic applies. ``origin``
     and ``revision`` let a caller reuse git lookups it has already made.
     """
 
@@ -366,15 +398,16 @@ def resolve_iris(
         return IriMinter(base_iri, _base(base_iri), pinned=False, file_segment=file_segment)
 
     origin = origin or _safe_cmd(["git", "config", "--get", "remote.origin.url"])
-    if not origin or "github.com" not in origin:
+    match = resolve_forge(origin, load_forges(forge_profiles))
+    if match is None:
         return IriMinter(None, "", pinned=False, file_segment=file_segment)
 
+    profile, repo = match
     revision = revision or _safe_cmd(["git", "rev-parse", "HEAD"]) or _safe_cmd(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"]
     )
-    repo = origin.replace(".git", "")
     context["@base"] = f"{repo}#"
-    context["blob"] = f"{repo}/blob/{revision}/"
+    context["blob"] = profile.blob_prefix(repo, revision)
     root = _safe_cmd(["git", "rev-parse", "--show-toplevel"])
     return IriMinter(
         repo,
@@ -407,6 +440,8 @@ class Prov:
         results: list[RDFMixin],
         success: bool = True,
         record_user: bool = False,
+        forge_profiles: str | None = None,
+        plan_graph: PlanGraph | None = None,
     ):
         """Assemble a provenance graph from rule execution details.
 
@@ -448,15 +483,25 @@ class Prov:
         origin = _safe_cmd(["git", "config", "--get", "remote.origin.url"])
 
         context = deepcopy(COMMON_CONTEXT)
-        minter = resolve_iris(base_iri, context, origin=origin, revision=commit)
+        minter = resolve_iris(
+            base_iri,
+            context,
+            origin=origin,
+            revision=commit,
+            forge_profiles=forge_profiles,
+        )
         base_iri = minter.base_iri
         _iri, _file_iri = minter.mint, minter.file
 
         def _apply_context(node: RDFMixin):
             return apply_context(node, context)
 
-        activity_id = _file_iri(f"{script.name}#{name}-{run_id}")
-        plan_id = _file_iri(script.name)
+        # A REPL or notebook yields names like "<stdin>" or "<ipython-input-3>",
+        # which are not legal in an IRI.
+        script_ref = quote(script.name, safe="")
+
+        activity_id = _file_iri(f"{script_ref}#{name}-{run_id}")
+        plan_id = _file_iri(script_ref)
         graph_id = _iri(f"graph-{name}")
         assoc_id = f"{activity_id}-association"
         env_id: str | None = None
@@ -465,13 +510,42 @@ class Prov:
 
         # Plan: the script at a commit. This is prospective provenance - the
         # recipe - and is deliberately not an agent.
+        #
+        # A bare SHA next to a modified checkout would name code that is not
+        # what ran, so a dirty tree is marked the way `git describe --dirty`
+        # does, and cannot be mistaken for a clean revision.
+        version = commit or None
+        if commit and working_tree_is_dirty():
+            version = f"{commit}-dirty"
+            logging.warning(
+                "Working tree has uncommitted changes; recording plan version as %s. "
+                "Entity IRIs pinned to %s may not reflect what actually ran.",
+                version,
+                commit[:12],
+            )
+
         plan = _apply_context(PlanNode(
             id=plan_id,
             type=("prov:Plan", "prov:Entity", "schema:SoftwareSourceCode"),
             label=script.name,
-            hasVersion=commit or None,
+            hasVersion=version,
             source=origin if origin else None,
         ))
+
+        # Optional prospective structure: the rule as a plan in its own right,
+        # linked to the plans it depends on via dct:requires.
+        rule_plan: PlanNode | None = None
+        if plan_graph is not None:
+            def _rule_plan_iri(rule: str) -> str:
+                return _file_iri(f"{script_ref}#rule-{quote(rule, safe='')}")
+
+            rule_plan = _apply_context(PlanNode(
+                id=_rule_plan_iri(plan_graph.rule),
+                type=("prov:Plan", "prov:Entity"),
+                label=plan_graph.rule,
+                source=plan_id,
+                requires=tuple(_rule_plan_iri(r) for r in plan_graph.requires) or None,
+            ))
 
         # Agent: the runtime that actually executed the plan.
         py_version = platform.python_version()
@@ -502,7 +576,8 @@ class Prov:
             id=assoc_id,
             type="prov:Association",
             agent=person.id if person is not None else agent_id,
-            hadPlan=plan_id,
+            # The rule is the more precise plan when we know it.
+            hadPlan=rule_plan.id if rule_plan is not None else plan_id,
         ))
 
         # Graph entity (metadata entry)
@@ -518,13 +593,15 @@ class Prov:
             return ref.id if ref.is_external else _file_iri(ref.path)
 
         def _entity(ref: ArtifactRef, *, generated_by: str | None = None) -> FileEntity:
+            digest = ref.digest
             node = FileEntity(
                 id=_entity_id(ref),
                 type=ref.types if len(ref.types) > 1 else ref.types[0],
                 format=ref.media_type,
                 extent=ref.extent,
                 modified=ref.modified,
-                identifier=ref.digest,
+                identifier=digest,
+                sha256=digest[len("sha256:"):] if (digest or "").startswith("sha256:") else None,
                 wasGeneratedBy=generated_by,
             )
             if ref.label:
@@ -614,6 +691,10 @@ class Prov:
             qualifiedAssociation=assoc_id,
             comment=("task failed" if not success else None),
             used=tuple(activity_used),
+            # Stated forward as well as inversely on each entity: prov:used and
+            # prov:generated are the pair a consumer reads off the activity,
+            # and they map straight onto RO-Crate's `object`/`result`.
+            generated=tuple(node.id for node in output_nodes) or None,
         ))
 
         return cls(
@@ -623,6 +704,7 @@ class Prov:
                 activity,
                 association,
                 plan,
+                *([rule_plan] if rule_plan is not None else []),
                 agent,
                 *([person] if person is not None else []),
                 *output_nodes,

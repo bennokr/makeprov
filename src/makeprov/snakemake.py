@@ -228,7 +228,12 @@ def build_prov_from_snakemake(
     # IANA-registered and any invented namespace would collide across unrelated
     # workflows that happen to share rule and file names.
     context = deepcopy(COMMON_CONTEXT)
-    minter = resolve_iris(config.base_iri, context, file_segment="file/")
+    minter = resolve_iris(
+        config.base_iri,
+        context,
+        file_segment="file/",
+        forge_profiles=config.forge_profiles,
+    )
 
     def file_id(path_str: str) -> str:
         return minter.file(path_str)
@@ -320,6 +325,7 @@ def build_prov_from_snakemake(
             identifier = info.get("sha256")
             if identifier:
                 entity.identifier = f"sha256:{identifier}"
+                entity.sha256 = identifier
         entity._extra["label"] = file_path
         file_entities[file_path] = entity
 
@@ -387,6 +393,7 @@ def build_prov_from_snakemake(
 
         for output in group.outputs:
             file_entities[output].wasGeneratedBy = activity_id
+        activity.generated = tuple(file_id(o) for o in group.outputs) or None
 
     jobid_to_activity: dict[int, str] = {}
     for group in groups:
@@ -400,6 +407,24 @@ def build_prov_from_snakemake(
             continue
         activities[job_activity]._extra.setdefault("wasInformedBy", [])
         activities[job_activity]._extra["wasInformedBy"].append(dep_activity)
+
+    # Prospective structure, opt-in: the DAG's job edges collapsed to rule
+    # edges. This says what the workflow *is*, independently of which jobs ran.
+    if config.emit_plan_graph:
+        rule_requires: dict[str, list[str]] = {}
+        for dependency, job in d3_edges:
+            upstream = jobid_to_rule.get(dependency)
+            downstream = jobid_to_rule.get(job)
+            if not upstream or not downstream or upstream == downstream:
+                continue
+            needed = rule_requires.setdefault(downstream, [])
+            if upstream not in needed:
+                needed.append(upstream)
+        for rule, needs in rule_requires.items():
+            if rule in plans:
+                plans[rule].requires = tuple(
+                    rule_plan_id(n) for n in needs if n in plans
+                ) or None
 
     nodes = [
         agent,
@@ -472,6 +497,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Record the git user as a schema:Person agent (off by default).",
     )
     parser.add_argument(
+        "--plan-graph",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Also link rule plans by dct:requires, describing the workflow's "
+            "prospective structure (off by default)."
+        ),
+    )
+    parser.add_argument(
+        "--forge-profiles",
+        default=None,
+        help="TOML file of extra forge profiles for self-hosted git hosts.",
+        metavar="PATH",
+    )
+    parser.add_argument(
         "--snakemake",
         default="snakemake",
         help="Snakemake executable.",
@@ -509,6 +549,10 @@ def main(argv: list[str] | None = None) -> int:
         cfg.context = namespace.context
     if namespace.record_user is not None:
         cfg.record_user = namespace.record_user
+    if namespace.plan_graph is not None:
+        cfg.emit_plan_graph = namespace.plan_graph
+    if namespace.forge_profiles is not None:
+        cfg.forge_profiles = namespace.forge_profiles
 
     smk_args = list(namespace.snakemake_args)
     if smk_args and smk_args[0] == "--":

@@ -255,6 +255,143 @@ def test_merge_deduplicates_singleton_descriptors(monkeypatch):
     assert len(_only(merged, AssociationNode)) == 2
 
 
+def test_outputs_expose_bare_hex_checksum(monkeypatch, tmp_path):
+    """schema:sha256 alongside dct:identifier, so no prefix parsing is needed."""
+
+    monkeypatch.setattr(prov_mod, "_safe_cmd", lambda argv: None)
+    out = tmp_path / "out.txt"
+    out.write_text("hello", encoding="utf-8")
+
+    prov = _create(outputs=[ArtifactRef.local(out)])
+    (entity,) = [n for n in _only(prov, FileEntity) if n.id.endswith("out.txt")]
+
+    assert entity.identifier == f"sha256:{entity.sha256}"
+    assert len(entity.sha256) == 64
+    assert ":" not in entity.sha256
+
+
+def test_non_sha256_digest_leaves_sha256_unset(monkeypatch):
+    monkeypatch.setattr(prov_mod, "_safe_cmd", lambda argv: None)
+    ref = ArtifactRef.external("https://ex.org/x", digest="md5:abc")
+
+    prov = _create(inputs=[ref])
+    (entity,) = [n for n in _entities(prov) if n.id == "https://ex.org/x"]
+
+    assert entity.identifier == "md5:abc"
+    assert entity.sha256 is None
+
+
+def test_activity_states_generated_forward(monkeypatch, tmp_path):
+    """prov:used and prov:generated are the pair read off the activity."""
+
+    monkeypatch.setattr(prov_mod, "_safe_cmd", lambda argv: None)
+    out = tmp_path / "out.txt"
+    out.write_text("x", encoding="utf-8")
+
+    prov = _create(outputs=[ArtifactRef.local(out)])
+    activity = next(n for n in prov.provenance if n.type == "prov:Activity")
+    (entity,) = [n for n in _only(prov, FileEntity) if n.id.endswith("out.txt")]
+
+    assert activity.generated == (entity.id,)
+    assert entity.wasGeneratedBy == activity.id
+
+
+def test_dirty_tree_marks_plan_version(monkeypatch, caplog):
+    """A bare SHA beside a modified tree would name code that isn't what ran."""
+
+    responses = {
+        "git rev-parse HEAD": "abc123",
+        "git status --porcelain": " M src/makeprov/core.py",
+    }
+    monkeypatch.setattr(
+        prov_mod, "_safe_cmd", lambda argv: responses.get(" ".join(argv))
+    )
+
+    with caplog.at_level("WARNING"):
+        prov = _create()
+
+    (plan,) = _only(prov, PlanNode)
+    assert plan.hasVersion == "abc123-dirty"
+    assert "uncommitted changes" in caplog.text
+
+
+def test_clean_tree_records_bare_commit(monkeypatch):
+    responses = {"git rev-parse HEAD": "abc123", "git status --porcelain": ""}
+    monkeypatch.setattr(
+        prov_mod, "_safe_cmd", lambda argv: responses.get(" ".join(argv))
+    )
+
+    (plan,) = _only(_create(), PlanNode)
+    assert plan.hasVersion == "abc123"
+
+
+def test_repl_script_name_is_iri_safe(monkeypatch):
+    """Notebooks and REPLs yield names like "<stdin>" that break IRIs."""
+
+    monkeypatch.setattr(prov_mod, "_safe_cmd", lambda argv: None)
+    monkeypatch.setattr(prov_mod, "_caller_script", lambda: Path("<stdin>"))
+
+    prov = _create()
+    ids = [n.id for n in prov.provenance]
+
+    assert not any("<" in i or ">" in i for i in ids)
+    assert any("%3Cstdin%3E" in i for i in ids)
+
+
+def test_plan_graph_is_off_by_default(monkeypatch):
+    monkeypatch.setattr(prov_mod, "_safe_cmd", lambda argv: None)
+    prov = _create()
+
+    (plan,) = _only(prov, PlanNode)
+    (assoc,) = _only(prov, AssociationNode)
+    assert plan.requires is None
+    assert assoc.hadPlan == plan.id
+
+
+def test_plan_graph_links_rules_with_requires(monkeypatch):
+    monkeypatch.setattr(prov_mod, "_safe_cmd", lambda argv: None)
+    prov = _create(plan_graph=prov_mod.PlanGraph(rule="transform", requires=("extract",)))
+
+    plans = {p.label: p for p in _only(prov, PlanNode)}
+    rule_plan = plans["transform"]
+    (assoc,) = _only(prov, AssociationNode)
+
+    assert rule_plan.requires is not None
+    assert rule_plan.requires[0].endswith("#rule-extract")
+    # The rule is the more precise plan the activity carried out.
+    assert assoc.hadPlan == rule_plan.id
+
+
+def test_plan_graph_end_to_end_uses_the_build_resolver(tmp_path):
+    """The emitted structure must agree with what build() would actually do."""
+
+    session = new_session()
+    cfg = ProvenanceConfig(
+        prov_dir=str(tmp_path / "prov"),
+        base_iri="https://ex.org/",
+        emit_plan_graph=True,
+    )
+    raw = tmp_path / "raw.txt"
+    clean = tmp_path / "clean.txt"
+
+    @rule(name="extract", config=cfg, session=session)
+    def extract(out: OutPath = OutPath(raw)):
+        out.write_text("raw")
+
+    @rule(name="transform", config=cfg, session=session)
+    def transform(src: InPath = InPath(raw), out: OutPath = OutPath(clean)):
+        out.write_text(src.read_text().upper())
+
+    extract()
+    transform()
+
+    document = (tmp_path / "prov" / "transform.json").read_text(encoding="utf-8")
+    assert "#rule-transform" in document
+    # transform depends on a file that `extract` produces, so the resolver
+    # should have found that edge.
+    assert "#rule-extract" in document
+
+
 def test_artifact_ref_requires_id_or_path():
     with pytest.raises(ValueError, match="either an 'id' or a 'path'"):
         ArtifactRef()

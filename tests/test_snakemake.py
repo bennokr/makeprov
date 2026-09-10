@@ -160,6 +160,57 @@ def test_snakemake_uses_github_heuristic(monkeypatch, tmp_path: Path):
     assert "rule/concat" in ids
 
 
+def _two_step_workflow():
+    dag = {
+        "nodes": [
+            {"id": 1, "value": {"rule": "concat"}},
+            {"id": 2, "value": {"rule": "count"}},
+        ],
+        "links": [{"u": 1, "v": 2}],
+    }
+    summary = [
+        {"rule": "concat", "version": "-", "input-file(s)": "a.txt",
+         "output_file": "mid.txt", "shellcmd": "cat", "status": "finished", "plan": "shell"},
+        {"rule": "count", "version": "-", "input-file(s)": "mid.txt",
+         "output_file": "out.txt", "shellcmd": "wc", "status": "finished", "plan": "shell"},
+    ]
+    return dag, summary
+
+
+def test_snakemake_plan_graph_is_off_by_default(monkeypatch):
+    _patch_cmds(monkeypatch, {"snakemake --version": "7.32.0"})
+    dag, summary = _two_step_workflow()
+
+    prov = smk.build_prov_from_snakemake(dag, summary, config=ProvenanceConfig())
+
+    assert all(p.requires is None for p in prov.provenance if isinstance(p, PlanNode))
+
+
+def test_snakemake_plan_graph_links_rules(monkeypatch):
+    """Job-level DAG edges collapse to rule-level dct:requires edges."""
+
+    _patch_cmds(monkeypatch, {"snakemake --version": "7.32.0"})
+    dag, summary = _two_step_workflow()
+
+    prov = smk.build_prov_from_snakemake(
+        dag, summary, config=ProvenanceConfig(emit_plan_graph=True)
+    )
+
+    plans = {p.label: p for p in prov.provenance if isinstance(p, PlanNode)}
+    assert plans["concat"].requires is None
+    assert plans["count"].requires == (plans["concat"].id,)
+
+
+def test_snakemake_activity_states_generated(monkeypatch):
+    _patch_cmds(monkeypatch, {"snakemake --version": "7.32.0"})
+    dag, summary = _minimal_workflow()
+
+    prov = smk.build_prov_from_snakemake(dag, summary, config=ProvenanceConfig())
+
+    activity = next(n for n in prov.provenance if isinstance(n, ActivityNode))
+    assert activity.generated == ("file/out.txt",)
+
+
 def test_snakemake_person_is_opt_in(monkeypatch):
     responses = {
         "snakemake --version": "7.32.0",

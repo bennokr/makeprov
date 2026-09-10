@@ -1,0 +1,35 @@
+# Declarative forge profiles.
+#
+# Each profile says how to build a permalink to a file at a given revision on a
+# git hosting service. `blob` is expanded with {repo} and {revision}; the file
+# path is appended to it, so it must end with a separator.
+#
+# Add profiles for self-hosted instances with ProvenanceConfig(forge_profiles=
+# "path/to/forges.toml"). Entries there are matched before these, so they can
+# also override a built-in host.
+
+[[forge]]
+name = "github"
+hosts = ["github.com"]
+blob = "{repo}/blob/{revision}/"
+
+[[forge]]
+name = "gitlab"
+hosts = ["gitlab.com"]
+blob = "{repo}/-/blob/{revision}/"
+
+[[forge]]
+name = "bitbucket"
+hosts = ["bitbucket.org"]
+blob = "{repo}/src/{revision}/"
+
+# Gitea and its fork Forgejo share a URL layout; Codeberg is a Forgejo instance.
+[[forge]]
+name = "forgejo"
+hosts = ["codeberg.org", "gitea.com"]
+blob = "{repo}/src/commit/{revision}/"
+
+[[forge]]
+name = "sourcehut"
+hosts = ["git.sr.ht"]
+blob = "{repo}/tree/{revision}/item/"

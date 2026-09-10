@@ -49,7 +49,7 @@ makeprov-snakemake = "makeprov.snakemake:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-makeprov = ["context.jsonld"]
+makeprov = ["context.jsonld", "forges.toml"]
 
 [tool.pytape]
 test = "tests/test_makeprov.py"
