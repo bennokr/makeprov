@@ -20,12 +20,14 @@ from .core import (
     rule,
     to_dot,
 )
+from .prov import ProvenanceWriteError
 from .rdfmixin import RDFMixin
 from .span import span
 
 __all__ = [
     "Config",
     "ProvenanceConfig",
+    "ProvenanceWriteError",
     "main",
     "ProvPath",
     "InPath",

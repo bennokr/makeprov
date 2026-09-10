@@ -15,6 +15,16 @@ from typing import Any, Literal, Optional, TypeAlias
 from .rdfmixin import RDFMixin
 from .config import Frame
 
+
+class ProvenanceWriteError(RuntimeError):
+    """Raised when a rule's provenance record could not be written.
+
+    Under :class:`~makeprov.config.ProvenanceConfig`'s default ``strict=True``,
+    this replaces the historical behavior of silently logging a warning and
+    returning a successful result with no provenance on disk.
+    """
+
+
 # ---------- JSON-LD dataclasses ----------
 
 _CONTEXT_PATH = Path(__file__).parent / "context.jsonld"

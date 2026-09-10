@@ -190,6 +190,49 @@ def test_sessions_isolate_registries(tmp_path):
     assert (tmp_path / "two.txt").read_text() == "two"
 
 
+def test_strict_provenance_failure_raises_by_default(monkeypatch, tmp_path):
+    from makeprov import ProvenanceWriteError
+
+    session = new_session()
+    cfg = ProvenanceConfig(prov_dir=str(tmp_path / "prov"))
+
+    @rule(name="strict_fail", config=cfg, session=session)
+    def strict_fail(out: OutPath = OutPath(tmp_path / "strict.txt")):
+        out.write_text("ok")
+
+    monkeypatch.setattr(
+        Prov, "write", lambda self, *a, **k: (_ for _ in ()).throw(OSError("disk full"))
+    )
+
+    try:
+        strict_fail()
+        assert False, "expected ProvenanceWriteError"
+    except ProvenanceWriteError as exc:
+        assert "strict_fail" in str(exc)
+
+    # The function itself still ran, even though provenance writing failed.
+    assert (tmp_path / "strict.txt").read_text() == "ok"
+
+
+def test_non_strict_provenance_failure_only_warns(monkeypatch, caplog, tmp_path):
+    session = new_session()
+    cfg = ProvenanceConfig(prov_dir=str(tmp_path / "prov"), strict=False)
+
+    @rule(name="lenient_fail", config=cfg, session=session)
+    def lenient_fail(out: OutPath = OutPath(tmp_path / "lenient.txt")):
+        out.write_text("ok")
+
+    monkeypatch.setattr(
+        Prov, "write", lambda self, *a, **k: (_ for _ in ()).throw(OSError("disk full"))
+    )
+
+    with caplog.at_level("WARNING"):
+        lenient_fail()
+
+    assert "Failed to write provenance" in caplog.text
+    assert (tmp_path / "lenient.txt").read_text() == "ok"
+
+
 def test_rule_returns_graph(tmp_path):
     input_csv = tmp_path / "region_totals.csv"
     graph_ttl = tmp_path / "region_totals.ttl"

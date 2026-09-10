@@ -10,6 +10,27 @@ from makeprov.prov import ActivityNode, AgentNode, FileEntity
 from makeprov import snakemake as smk
 
 
+def test_split_files_whole_cell_existing_path_with_spaces(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    spaced = Path("has space.txt")
+    spaced.write_text("x", encoding="utf-8")
+    assert smk._split_files(str(spaced)) == [str(spaced)]
+
+
+def test_split_files_multiple_existing_paths(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Path("a.txt").write_text("a", encoding="utf-8")
+    Path("b.txt").write_text("b", encoding="utf-8")
+    assert smk._split_files("a.txt b.txt") == ["a.txt", "b.txt"]
+    assert smk._split_files("a.txt, b.txt") == ["a.txt", "b.txt"]
+
+
+def test_split_files_ambiguous_whitespace_raises(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="Cannot unambiguously split"):
+        smk._split_files("results/file with spaces.txt")
+
+
 def test_extract_json_blob_with_leading_noise():
     payload = '{"nodes": [], "links": []}'
     noisy = "INFO Running something\n" + payload + "\n"
