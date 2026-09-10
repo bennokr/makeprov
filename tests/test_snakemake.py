@@ -83,6 +83,39 @@ def test_snakemake_rules_become_plans(monkeypatch):
     assert activity.qualifiedAssociation == assoc.id
 
 
+def test_snakemake_mints_no_unregistered_urn_namespace(monkeypatch):
+    """RFC 8141 requires a URN's NID to be IANA-registered.
+
+    The bridge used to default to `urn:snakemake:`, which names no real
+    namespace and would collide across unrelated workflows sharing rule names.
+    """
+
+    monkeypatch.setattr(smk, "_safe_cmd", lambda argv: "7.32.0")
+    dag, summary = _minimal_workflow()
+
+    prov = smk.build_prov_from_snakemake(dag, summary, config=ProvenanceConfig())
+
+    ids = [node.id for node in prov.provenance]
+    assert ids, "expected some nodes"
+    assert not any(i.startswith("urn:snakemake") for i in ids)
+    # Relative IRIs, resolved against the document base, like the decorator API.
+    assert "rule/concat" in ids
+    assert "job/1" in ids
+
+
+def test_snakemake_uses_configured_base_iri(monkeypatch):
+    monkeypatch.setattr(smk, "_safe_cmd", lambda argv: "7.32.0")
+    dag, summary = _minimal_workflow()
+
+    prov = smk.build_prov_from_snakemake(
+        dag, summary, config=ProvenanceConfig(base_iri="https://example.org/wf")
+    )
+
+    ids = [node.id for node in prov.provenance]
+    assert "https://example.org/wf/rule/concat" in ids
+    assert "https://example.org/wf/job/1" in ids
+
+
 def test_snakemake_person_is_opt_in(monkeypatch):
     responses = {
         "snakemake --version": "7.32.0",
@@ -157,12 +190,12 @@ def test_build_prov_from_snakemake_generates_edges(monkeypatch, tmp_path: Path):
     activities = {node.id: node for node in prov.provenance if isinstance(node, ActivityNode)}
     files = {node._extra["label"]: node for node in prov.provenance if isinstance(node, FileEntity)}
 
-    second_job = activities["urn:snakemake:job/2"]
-    assert second_job._extra.get("wasInformedBy") == ["urn:snakemake:job/1"]
+    second_job = activities["job/2"]
+    assert second_job._extra.get("wasInformedBy") == ["job/1"]
     assert second_job._extra["snakemake:rule"] == "count_words"
 
     assert files[str(results_dir / "word_count.txt")].wasGeneratedBy == second_job.id
-    assert "urn:snakemake:file" in files[str(results_dir / "word_count.txt")].id
+    assert files[str(results_dir / "word_count.txt")].id.startswith("file/")
 
 
 def test_main_writes_provenance_document(monkeypatch, tmp_path: Path):

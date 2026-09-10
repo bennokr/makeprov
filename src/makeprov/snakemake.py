@@ -219,8 +219,13 @@ def build_prov_from_snakemake(
     config: ProvenanceConfig,
     name: str = "snakemake",
 ) -> Prov:
-    base = config.base_iri or "urn:snakemake:"
-    if not base.endswith(("/", "#", ":")):
+    # No base_iri means relative IRIs, matching the decorator API. Minting a
+    # scheme here is not an option: RFC 8141 requires a URN's namespace
+    # identifier to be IANA-registered, so something like "urn:snakemake:" does
+    # not name a real namespace, and an invented one would also collide across
+    # unrelated workflows that happen to share rule and file names.
+    base = config.base_iri or ""
+    if base and not base.endswith(("/", "#", ":")):
         base += "/"
 
     def file_id(path_str: str) -> str:

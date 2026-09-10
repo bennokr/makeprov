@@ -98,7 +98,7 @@ D3 DAG provides the necessary IDs. File metadata such as hashes, MIME types and
 timestamps are captured from the filesystem when available.
 
 The bridge uses the same Plan/Agent split as the decorator API. Each Snakemake
-*rule* becomes a `prov:Plan` (`urn:snakemake:rule/<name>`), Snakemake itself is
+*rule* becomes a `prov:Plan` (`<base>rule/<name>`), Snakemake itself is
 the `prov:SoftwareAgent`, and every job activity carries a
 `prov:qualifiedAssociation` tying the agent to the rule it executed. The shell
 command stays on the activity rather than the plan, since `--detailed-summary`
@@ -107,6 +107,26 @@ run rather than of the recipe.
 
 Pass `--record-user` to additionally record the git user as a `schema:Person`
 agent; as in the decorator API this is off by default.
+
+### Identifiers
+
+Node identifiers are built from `base_iri`. When it is unset the bridge emits
+*relative* IRIs (`rule/concat`, `job/1`, `file/data/a.txt`) which resolve
+against the document's base, matching the decorator API and keeping the
+document free of absolute local paths. Set `base_iri` whenever you intend to
+publish or merge the document, so its entities get stable absolute identity:
+
+```bash
+makeprov-snakemake --prov-path prov/snakemake \
+  -c 'base_iri = "https://example.org/runs/2026-09-10/"' \
+  -- --snakefile Snakefile --nolock
+```
+
+The bridge deliberately does not invent a URN namespace for this. RFC 8141
+requires a URN's namespace identifier to be registered with IANA, so a scheme
+like `urn:snakemake:` names no real namespace, and any invented namespace would
+also make two unrelated workflows with a rule named `concat` claim the same
+identifier.
 
 Use the standard `makeprov` serialization helpers to post-process the output:
 

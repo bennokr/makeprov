@@ -296,8 +296,13 @@ graph differs:
   disappearing.
 - `Prov.create()` takes `list[ArtifactRef]` instead of `list[Path]`.
 - The Snakemake bridge follows the same model: each rule is now a `prov:Plan`
-  at `urn:snakemake:rule/<name>`, and each job activity carries a
+  at `<base>rule/<name>`, and each job activity carries a
   `prov:qualifiedAssociation`. Its agent node gained `schema:SoftwareApplication`.
+- The bridge no longer defaults to a `urn:snakemake:` namespace. That NID was
+  never IANA-registered, so it named no real namespace and collided across
+  unrelated workflows sharing rule names. Without `base_iri` it now emits
+  relative IRIs (`rule/concat`, `job/1`), like the decorator API; set
+  `base_iri` to get absolute ones.
 
 ### Scoped spans and cached downloads
 
