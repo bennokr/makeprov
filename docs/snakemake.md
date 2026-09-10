@@ -110,11 +110,27 @@ agent; as in the decorator API this is off by default.
 
 ### Identifiers
 
-Node identifiers are built from `base_iri`. When it is unset the bridge emits
-*relative* IRIs (`rule/concat`, `job/1`, `file/data/a.txt`) which resolve
-against the document's base, matching the decorator API and keeping the
-document free of absolute local paths. Set `base_iri` whenever you intend to
-publish or merge the document, so its entities get stable absolute identity:
+The bridge and the decorator API share one identifier policy, implemented by
+`makeprov.prov.resolve_iris`, and resolve it in this order:
+
+1. An explicit `base_iri` is used as-is:
+   `https://example.org/wf/rule/concat`.
+2. Otherwise, if the working tree has a GitHub remote, the repository URL
+   becomes the document's `@base` and files get a `blob:` prefix pinned to the
+   current **commit**, so `README.md` becomes
+   `https://github.com/you/repo/blob/<sha>/README.md`. Pinning to the commit
+   rather than the branch matters: a branch URL names different bytes after
+   every push.
+3. Otherwise identifiers stay *relative* (`rule/concat`, `job/1`,
+   `file/data/a.txt`) and resolve against the document's base.
+
+A `blob:` identifier expands to `<repo>/blob/<commit>/<path>`, so it is only
+used for files inside the repository. An absolute path within the checkout is
+rewritten to its repo-relative form; anything outside gets a `file:` URI rather
+than an identifier that looks resolvable but isn't.
+
+Set `base_iri` whenever you intend to publish or merge the document outside the
+repository it was produced in:
 
 ```bash
 makeprov-snakemake --prov-path prov/snakemake \
@@ -122,7 +138,7 @@ makeprov-snakemake --prov-path prov/snakemake \
   -- --snakefile Snakefile --nolock
 ```
 
-The bridge deliberately does not invent a URN namespace for this. RFC 8141
+The bridge deliberately does not invent a URN namespace as a fallback. RFC 8141
 requires a URN's namespace identifier to be registered with IANA, so a scheme
 like `urn:snakemake:` names no real namespace, and any invented namespace would
 also make two unrelated workflows with a rule named `concat` claim the same

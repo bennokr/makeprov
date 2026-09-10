@@ -300,9 +300,13 @@ graph differs:
   `prov:qualifiedAssociation`. Its agent node gained `schema:SoftwareApplication`.
 - The bridge no longer defaults to a `urn:snakemake:` namespace. That NID was
   never IANA-registered, so it named no real namespace and collided across
-  unrelated workflows sharing rule names. Without `base_iri` it now emits
-  relative IRIs (`rule/concat`, `job/1`), like the decorator API; set
-  `base_iri` to get absolute ones.
+  unrelated workflows sharing rule names. It now shares the decorator API's
+  identifier policy (`makeprov.prov.resolve_iris`): an explicit `base_iri`,
+  else a commit-pinned base derived from a GitHub remote, else relative IRIs.
+- `blob:` identifiers are only minted for files inside the repository. An
+  absolute path within the checkout is rewritten to its repo-relative form, and
+  a path outside it gets a `file:` URI instead of a `blob:` IRI that would
+  expand to a nonexistent location.
 
 ### Scoped spans and cached downloads
 

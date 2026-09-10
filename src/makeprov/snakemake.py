@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import subprocess
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,8 @@ from .prov import (
     Prov,
     _path_info,
     _safe_cmd,
+    apply_context,
+    resolve_iris,
 )
 
 # Ensure prov:wasInformedBy is present for job dependency edges.
@@ -219,17 +222,16 @@ def build_prov_from_snakemake(
     config: ProvenanceConfig,
     name: str = "snakemake",
 ) -> Prov:
-    # No base_iri means relative IRIs, matching the decorator API. Minting a
-    # scheme here is not an option: RFC 8141 requires a URN's namespace
-    # identifier to be IANA-registered, so something like "urn:snakemake:" does
-    # not name a real namespace, and an invented one would also collide across
-    # unrelated workflows that happen to share rule and file names.
-    base = config.base_iri or ""
-    if base and not base.endswith(("/", "#", ":")):
-        base += "/"
+    # Same identifier policy as the decorator API: an explicit base_iri, else a
+    # commit-pinned GitHub base, else relative IRIs. Inventing a scheme here is
+    # not an option, since RFC 8141 requires a URN's namespace identifier to be
+    # IANA-registered and any invented namespace would collide across unrelated
+    # workflows that happen to share rule and file names.
+    context = deepcopy(COMMON_CONTEXT)
+    minter = resolve_iris(config.base_iri, context, file_segment="file/")
 
     def file_id(path_str: str) -> str:
-        return f"{base}file/{Path(path_str).as_posix()}"
+        return minter.file(path_str)
 
     def job_fallback_id(group: _JobGroup) -> str:
         digest = hashlib.sha1(  # noqa: S324
@@ -245,11 +247,11 @@ def build_prov_from_snakemake(
                 )
             ).encode("utf-8")
         ).hexdigest()[:12]
-        return f"{base}job/{group.rule}/{digest}"
+        return minter.mint(f"job/{group.rule}/{digest}")
 
     smk_version = _safe_cmd(["snakemake", "--version"])
     agent = AgentNode(
-        id=f"{base}agent/snakemake",
+        id=minter.mint("agent/snakemake"),
         type=("prov:Agent", "prov:SoftwareAgent", "schema:SoftwareApplication"),
         label="snakemake",
         hasVersion=smk_version or None,
@@ -264,7 +266,7 @@ def build_prov_from_snakemake(
         user_email = _safe_cmd(["git", "config", "--get", "user.email"])
         if user_name or user_email:
             person = PersonNode(
-                id=f"mailto:{user_email}" if user_email else f"{base}agent/user",
+                id=f"mailto:{user_email}" if user_email else minter.mint("agent/user"),
                 type=("prov:Agent", "prov:Person", "schema:Person"),
                 name=user_name or None,
                 email=user_email or None,
@@ -273,7 +275,7 @@ def build_prov_from_snakemake(
     responsible_agent = person.id if person is not None else agent.id
 
     def rule_plan_id(rule: str) -> str:
-        return f"{base}rule/{rule}"
+        return minter.mint(f"rule/{rule}")
 
     jobid_to_rule, d3_edges = _index_d3dag(dag)
     jobids_by_rule: dict[str, list[int]] = {}
@@ -340,7 +342,7 @@ def build_prov_from_snakemake(
 
     for group in groups:
         activity_id = (
-            f"{base}job/{group.jobid}"
+            minter.mint(f"job/{group.jobid}")
             if group.jobid is not None
             else job_fallback_id(group)
         )
@@ -399,18 +401,21 @@ def build_prov_from_snakemake(
         activities[job_activity]._extra.setdefault("wasInformedBy", [])
         activities[job_activity]._extra["wasInformedBy"].append(dep_activity)
 
+    nodes = [
+        agent,
+        *([person] if person is not None else []),
+        *plans.values(),
+        *associations,
+        *activities.values(),
+        *file_entities.values(),
+    ]
+
     return Prov(
-        base_iri=config.base_iri or "",
+        base_iri=minter.base_iri or "",
         name=name,
-        provenance=[
-            agent,
-            *([person] if person is not None else []),
-            *plans.values(),
-            *associations,
-            *activities.values(),
-            *file_entities.values(),
-        ],
+        provenance=[apply_context(node, context) for node in nodes],
         results=[],
+        context=context,
     )
 
 

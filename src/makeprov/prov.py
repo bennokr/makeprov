@@ -296,6 +296,95 @@ def _base(iri: str | None) -> str:
     return iri if iri.endswith(("/", "#")) else iri + "/"
 
 
+def apply_context(node: RDFMixin, context: dict) -> RDFMixin:
+    """Bind a document-level context to a node and rebuild its term aliases."""
+
+    node.__context__ = context
+    if hasattr(node, "_build_aliases"):
+        node._build_aliases()
+    return node
+
+
+@dataclass(frozen=True)
+class IriMinter:
+    """Mints the identifiers for one provenance document.
+
+    Holds the base-IRI policy shared by the decorator API and the Snakemake
+    bridge, so both name things the same way.
+    """
+
+    base_iri: str | None
+    prefix: str
+    pinned: bool
+    file_segment: str = ""
+    repo_root: Path | None = None
+
+    def mint(self, tail: str) -> str:
+        return f"{self.prefix}{tail}"
+
+    def file(self, path: Path | str) -> str:
+        path = Path(path)
+        if not self.pinned:
+            return self.mint(f"{self.file_segment}{path.as_posix()}")
+
+        # A `blob:` identifier expands to <repo>/blob/<commit>/<path>, so it is
+        # only meaningful for paths inside the repository. Anything else gets a
+        # file: URI rather than an identifier that looks resolvable and isn't.
+        if path.is_absolute():
+            if self.repo_root is None:
+                return path.as_uri()
+            try:
+                path = path.relative_to(self.repo_root)
+            except ValueError:
+                return path.as_uri()
+        return f"blob:{path.as_posix()}"
+
+
+def resolve_iris(
+    base_iri: str | None,
+    context: dict,
+    *,
+    file_segment: str = "",
+    origin: str | None = None,
+    revision: str | None = None,
+) -> IriMinter:
+    """Decide how a document's identifiers are minted.
+
+    An explicit ``base_iri`` is used as-is. Failing that, a GitHub remote makes
+    the repository URL the document's ``@base`` and pins file identifiers to the
+    current commit through a ``blob:`` prefix — pinning to the commit rather
+    than the branch matters, since a branch URL names different bytes after
+    every push. With neither, identifiers stay relative to the document, which
+    is preferable to inventing a namespace that would collide across unrelated
+    workflows.
+
+    ``context`` is mutated in place when the git heuristic applies. ``origin``
+    and ``revision`` let a caller reuse git lookups it has already made.
+    """
+
+    if base_iri:
+        return IriMinter(base_iri, _base(base_iri), pinned=False, file_segment=file_segment)
+
+    origin = origin or _safe_cmd(["git", "config", "--get", "remote.origin.url"])
+    if not origin or "github.com" not in origin:
+        return IriMinter(None, "", pinned=False, file_segment=file_segment)
+
+    revision = revision or _safe_cmd(["git", "rev-parse", "HEAD"]) or _safe_cmd(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"]
+    )
+    repo = origin.replace(".git", "")
+    context["@base"] = f"{repo}#"
+    context["blob"] = f"{repo}/blob/{revision}/"
+    root = _safe_cmd(["git", "rev-parse", "--show-toplevel"])
+    return IriMinter(
+        repo,
+        "",
+        pinned=True,
+        file_segment=file_segment,
+        repo_root=Path(root) if root else None,
+    )
+
+
 # ---------- Public Prov builder ----------
 @dataclass
 class Prov:
@@ -354,40 +443,17 @@ class Prov:
                     results=[],
                 )
         """
-        def _iri(tail: str) -> str:
-            return f"{_base(base_iri)}{tail}"
-
-        def _file_iri(path: Path | str) -> str:
-            return _iri(Path(path).as_posix())
-
         script = _caller_script()
         commit = _safe_cmd(["git", "rev-parse", "HEAD"])
         origin = _safe_cmd(["git", "config", "--get", "remote.origin.url"])
 
         context = deepcopy(COMMON_CONTEXT)
+        minter = resolve_iris(base_iri, context, origin=origin, revision=commit)
+        base_iri = minter.base_iri
+        _iri, _file_iri = minter.mint, minter.file
 
         def _apply_context(node: RDFMixin):
-            node.__context__ = context
-            if hasattr(node, "_build_aliases"):
-                node._build_aliases()
-            return node
-
-        # Default Github URL heuristic
-        if not base_iri and origin and "github.com" in origin:
-            # Pin to the commit, not the branch: a branch-based blob URL names
-            # different bytes over time, so the same IRI would denote different
-            # content on every push.
-            revision = commit or _safe_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-            base_iri = origin.replace(".git", "")
-
-            context["@base"] = f"{base_iri}#"
-            context["blob"] = f"{base_iri}/blob/{revision}/"
-
-            def _iri(tail: str) -> str:
-                return tail # only suffix, put @base in context
-
-            def _file_iri(path: Path) -> str:
-                return f'blob:{Path(path).as_posix()}' # blob prefix
+            return apply_context(node, context)
 
         activity_id = _file_iri(f"{script.name}#{name}-{run_id}")
         plan_id = _file_iri(script.name)

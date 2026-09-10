@@ -14,7 +14,23 @@ from makeprov.prov import (
     PersonNode,
     PlanNode,
 )
+from makeprov import prov as prov_mod
 from makeprov import snakemake as smk
+
+
+def _patch_cmds(monkeypatch, responses: dict[str, str] | None = None):
+    """Stub out shell lookups in both modules.
+
+    ``snakemake.py`` imports ``_safe_cmd`` by value, and the identifier
+    heuristic lives in ``prov.py``, so patching one module alone would leave the
+    other reading the real git checkout and make these tests depend on wherever
+    they happen to run.
+    """
+
+    responses = responses or {}
+    fake = lambda argv: responses.get(" ".join(argv))  # noqa: E731
+    monkeypatch.setattr(smk, "_safe_cmd", fake)
+    monkeypatch.setattr(prov_mod, "_safe_cmd", fake)
 
 
 def test_split_files_whole_cell_existing_path_with_spaces(tmp_path: Path, monkeypatch):
@@ -63,7 +79,7 @@ def _minimal_workflow():
 def test_snakemake_rules_become_plans(monkeypatch):
     """The bridge uses the same Plan/Agent split as the decorator API."""
 
-    monkeypatch.setattr(smk, "_safe_cmd", lambda argv: "7.32.0")
+    _patch_cmds(monkeypatch, {"snakemake --version": "7.32.0"})
     dag, summary = _minimal_workflow()
 
     prov = smk.build_prov_from_snakemake(dag, summary, config=ProvenanceConfig())
@@ -90,7 +106,7 @@ def test_snakemake_mints_no_unregistered_urn_namespace(monkeypatch):
     namespace and would collide across unrelated workflows sharing rule names.
     """
 
-    monkeypatch.setattr(smk, "_safe_cmd", lambda argv: "7.32.0")
+    _patch_cmds(monkeypatch, {"snakemake --version": "7.32.0"})
     dag, summary = _minimal_workflow()
 
     prov = smk.build_prov_from_snakemake(dag, summary, config=ProvenanceConfig())
@@ -104,7 +120,7 @@ def test_snakemake_mints_no_unregistered_urn_namespace(monkeypatch):
 
 
 def test_snakemake_uses_configured_base_iri(monkeypatch):
-    monkeypatch.setattr(smk, "_safe_cmd", lambda argv: "7.32.0")
+    _patch_cmds(monkeypatch, {"snakemake --version": "7.32.0"})
     dag, summary = _minimal_workflow()
 
     prov = smk.build_prov_from_snakemake(
@@ -116,13 +132,41 @@ def test_snakemake_uses_configured_base_iri(monkeypatch):
     assert "https://example.org/wf/job/1" in ids
 
 
+def test_snakemake_uses_github_heuristic(monkeypatch, tmp_path: Path):
+    """Without a base_iri the bridge derives one from the git remote, exactly
+    as the decorator API does."""
+
+    monkeypatch.chdir(tmp_path)
+    Path("a.txt").write_text("a", encoding="utf-8")
+    _patch_cmds(
+        monkeypatch,
+        {
+            "snakemake --version": "7.32.0",
+            "git config --get remote.origin.url": "https://github.com/example/repo.git",
+            "git rev-parse HEAD": "abc123",
+            "git rev-parse --show-toplevel": str(tmp_path),
+        },
+    )
+    dag, summary = _minimal_workflow()
+
+    prov = smk.build_prov_from_snakemake(dag, summary, config=ProvenanceConfig())
+
+    assert prov.context["@base"] == "https://github.com/example/repo#"
+    # Commit-pinned, not branch-pinned.
+    assert prov.context["blob"] == "https://github.com/example/repo/blob/abc123/"
+
+    ids = [node.id for node in prov.provenance]
+    assert "blob:a.txt" in ids
+    assert "rule/concat" in ids
+
+
 def test_snakemake_person_is_opt_in(monkeypatch):
     responses = {
         "snakemake --version": "7.32.0",
         "git config --get user.name": "Ada Lovelace",
         "git config --get user.email": "ada@example.org",
     }
-    monkeypatch.setattr(smk, "_safe_cmd", lambda argv: responses.get(" ".join(argv)))
+    _patch_cmds(monkeypatch, responses)
     dag, summary = _minimal_workflow()
 
     default = smk.build_prov_from_snakemake(dag, summary, config=ProvenanceConfig())
@@ -175,7 +219,7 @@ def test_build_prov_from_snakemake_generates_edges(monkeypatch, tmp_path: Path):
         },
     ]
 
-    monkeypatch.setattr(smk, "_safe_cmd", lambda _: "7.32.0")
+    _patch_cmds(monkeypatch, {"snakemake --version": "7.32.0"})
 
     prov = smk.build_prov_from_snakemake(
         dag,
@@ -229,7 +273,7 @@ def test_main_writes_provenance_document(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(smk, "get_d3dag_json", lambda *_, **__: dag)
     monkeypatch.setattr(smk, "get_detailed_summary", lambda *_, **__: summary)
-    monkeypatch.setattr(smk, "_safe_cmd", lambda _: "7.32.0")
+    _patch_cmds(monkeypatch, {"snakemake --version": "7.32.0"})
 
     prov_path = tmp_path / "out" / "workflow"
     exit_code = smk.main(["--prov-path", str(prov_path), "--snakemake", "snakemake"])
