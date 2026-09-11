@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import subprocess
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -15,10 +16,15 @@ from .prov import (
     COMMON_CONTEXT,
     ActivityNode,
     AgentNode,
+    AssociationNode,
     FileEntity,
+    PersonNode,
+    PlanNode,
     Prov,
     _path_info,
     _safe_cmd,
+    apply_context,
+    resolve_iris,
 )
 
 # Ensure prov:wasInformedBy is present for job dependency edges.
@@ -216,12 +222,21 @@ def build_prov_from_snakemake(
     config: ProvenanceConfig,
     name: str = "snakemake",
 ) -> Prov:
-    base = config.base_iri or "urn:snakemake:"
-    if not base.endswith(("/", "#", ":")):
-        base += "/"
+    # Same identifier policy as the decorator API: an explicit base_iri, else a
+    # commit-pinned GitHub base, else relative IRIs. Inventing a scheme here is
+    # not an option, since RFC 8141 requires a URN's namespace identifier to be
+    # IANA-registered and any invented namespace would collide across unrelated
+    # workflows that happen to share rule and file names.
+    context = deepcopy(COMMON_CONTEXT)
+    minter = resolve_iris(
+        config.base_iri,
+        context,
+        file_segment="file/",
+        forge_profiles=config.forge_profiles,
+    )
 
     def file_id(path_str: str) -> str:
-        return f"{base}file/{Path(path_str).as_posix()}"
+        return minter.file(path_str)
 
     def job_fallback_id(group: _JobGroup) -> str:
         digest = hashlib.sha1(  # noqa: S324
@@ -237,16 +252,35 @@ def build_prov_from_snakemake(
                 )
             ).encode("utf-8")
         ).hexdigest()[:12]
-        return f"{base}job/{group.rule}/{digest}"
+        return minter.mint(f"job/{group.rule}/{digest}")
 
     smk_version = _safe_cmd(["snakemake", "--version"])
     agent = AgentNode(
-        id=f"{base}agent/snakemake",
-        type=("prov:Agent", "prov:SoftwareAgent"),
+        id=minter.mint("agent/snakemake"),
+        type=("prov:Agent", "prov:SoftwareAgent", "schema:SoftwareApplication"),
         label="snakemake",
         hasVersion=smk_version or None,
         source=None,
     )
+
+    # Same opt-in as the decorator API: a name and email address are personal
+    # data, not something to emit into a published document by accident.
+    person: PersonNode | None = None
+    if config.record_user:
+        user_name = _safe_cmd(["git", "config", "--get", "user.name"])
+        user_email = _safe_cmd(["git", "config", "--get", "user.email"])
+        if user_name or user_email:
+            person = PersonNode(
+                id=f"mailto:{user_email}" if user_email else minter.mint("agent/user"),
+                type=("prov:Agent", "prov:Person", "schema:Person"),
+                name=user_name or None,
+                email=user_email or None,
+            )
+
+    responsible_agent = person.id if person is not None else agent.id
+
+    def rule_plan_id(rule: str) -> str:
+        return minter.mint(f"rule/{rule}")
 
     jobid_to_rule, d3_edges = _index_d3dag(dag)
     jobids_by_rule: dict[str, list[int]] = {}
@@ -291,27 +325,53 @@ def build_prov_from_snakemake(
             identifier = info.get("sha256")
             if identifier:
                 entity.identifier = f"sha256:{identifier}"
+                entity.sha256 = identifier
         entity._extra["label"] = file_path
         file_entities[file_path] = entity
 
+    # Each Snakemake rule is the plan its jobs carry out. The shell command
+    # stays on the activity rather than the plan: --detailed-summary may report
+    # it post-expansion, so it describes a particular run, not the recipe.
+    plans: dict[str, PlanNode] = {}
+    for rule in sorted(groups_by_rule):
+        plan = PlanNode(
+            id=rule_plan_id(rule),
+            type=("prov:Plan", "prov:Entity", "schema:SoftwareSourceCode"),
+            label=rule,
+        )
+        plan._extra["snakemake:rule"] = rule
+        plans[rule] = plan
+
     activities: dict[str, ActivityNode] = {}
+    associations: list[AssociationNode] = []
     group_to_act_id: dict[_JobGroup, str] = {}
 
     for group in groups:
         activity_id = (
-            f"{base}job/{group.jobid}"
+            minter.mint(f"job/{group.jobid}")
             if group.jobid is not None
             else job_fallback_id(group)
         )
         group_to_act_id[group] = activity_id
 
         used_ids = [file_id(inp) for inp in group.inputs]
+        association = AssociationNode(
+            id=f"{activity_id}-association",
+            type="prov:Association",
+            agent=responsible_agent,
+            hadPlan=rule_plan_id(group.rule),
+        )
+        associations.append(association)
+
         activity = ActivityNode(
             id=activity_id,
             type="prov:Activity",
             startedAtTime=None,
             endedAtTime=None,
-            wasAssociatedWith=agent.id,
+            wasAssociatedWith=(
+                (agent.id, person.id) if person is not None else agent.id
+            ),
+            qualifiedAssociation=association.id,
             used=tuple(used_ids) if used_ids else None,
             comment=None,
         )
@@ -333,6 +393,7 @@ def build_prov_from_snakemake(
 
         for output in group.outputs:
             file_entities[output].wasGeneratedBy = activity_id
+        activity.generated = tuple(file_id(o) for o in group.outputs) or None
 
     jobid_to_activity: dict[int, str] = {}
     for group in groups:
@@ -347,11 +408,39 @@ def build_prov_from_snakemake(
         activities[job_activity]._extra.setdefault("wasInformedBy", [])
         activities[job_activity]._extra["wasInformedBy"].append(dep_activity)
 
+    # Prospective structure, opt-in: the DAG's job edges collapsed to rule
+    # edges. This says what the workflow *is*, independently of which jobs ran.
+    if config.emit_plan_graph:
+        rule_requires: dict[str, list[str]] = {}
+        for dependency, job in d3_edges:
+            upstream = jobid_to_rule.get(dependency)
+            downstream = jobid_to_rule.get(job)
+            if not upstream or not downstream or upstream == downstream:
+                continue
+            needed = rule_requires.setdefault(downstream, [])
+            if upstream not in needed:
+                needed.append(upstream)
+        for rule, needs in rule_requires.items():
+            if rule in plans:
+                plans[rule].requires = tuple(
+                    rule_plan_id(n) for n in needs if n in plans
+                ) or None
+
+    nodes = [
+        agent,
+        *([person] if person is not None else []),
+        *plans.values(),
+        *associations,
+        *activities.values(),
+        *file_entities.values(),
+    ]
+
     return Prov(
-        base_iri=config.base_iri or "",
+        base_iri=minter.base_iri or "",
         name=name,
-        provenance=[agent, *activities.values(), *file_entities.values()],
+        provenance=[apply_context(node, context) for node in nodes],
         results=[],
+        context=context,
     )
 
 
@@ -402,6 +491,27 @@ def main(argv: list[str] | None = None) -> int:
         help="Embed JSON-LD context inline.",
     )
     parser.add_argument(
+        "--record-user",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Record the git user as a schema:Person agent (off by default).",
+    )
+    parser.add_argument(
+        "--plan-graph",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Also link rule plans by dct:requires, describing the workflow's "
+            "prospective structure (off by default)."
+        ),
+    )
+    parser.add_argument(
+        "--forge-profiles",
+        default=None,
+        help="TOML file of extra forge profiles for self-hosted git hosts.",
+        metavar="PATH",
+    )
+    parser.add_argument(
         "--snakemake",
         default="snakemake",
         help="Snakemake executable.",
@@ -437,6 +547,12 @@ def main(argv: list[str] | None = None) -> int:
         cfg.frame = namespace.frame  # type: ignore[assignment]
     if namespace.context is not None:
         cfg.context = namespace.context
+    if namespace.record_user is not None:
+        cfg.record_user = namespace.record_user
+    if namespace.plan_graph is not None:
+        cfg.emit_plan_graph = namespace.plan_graph
+    if namespace.forge_profiles is not None:
+        cfg.forge_profiles = namespace.forge_profiles
 
     smk_args = list(namespace.snakemake_args)
     if smk_args and smk_args[0] == "--":

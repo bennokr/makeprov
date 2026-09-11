@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import mimetypes
+import platform
 import re
 import subprocess
 from copy import deepcopy
@@ -11,9 +12,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional, TypeAlias
+from urllib.parse import quote
 
 from .rdfmixin import RDFMixin
 from .config import Frame
+from .forges import load_forges, resolve_forge
+from .refs import ArtifactRef
 
 
 class ProvenanceWriteError(RuntimeError):
@@ -22,6 +26,16 @@ class ProvenanceWriteError(RuntimeError):
     Under :class:`~makeprov.config.ProvenanceConfig`'s default ``strict=True``,
     this replaces the historical behavior of silently logging a warning and
     returning a successful result with no provenance on disk.
+    """
+
+
+class UnresolvedArtifactError(ProvenanceWriteError):
+    """Raised when a declared output could not be resolved to a real artifact.
+
+    A rule that reports success while one of its declared outputs is missing has
+    either failed silently or mis-declared its outputs. Earlier versions dropped
+    such artifacts from the graph without comment; that produced provenance
+    which looked complete but wasn't.
     """
 
 
@@ -47,7 +61,9 @@ class ActivityNode(BaseNode):
     startedAtTime: datetime | None = None
     endedAtTime: datetime | None = None
     wasAssociatedWith: AgentNode | JSONLDRef | None = None
+    qualifiedAssociation: AssociationNode | JSONLDRef | None = None
     used: tuple[FileEntity | JSONLDRef] | None = None
+    generated: tuple[JSONLDRef, ...] | None = None
     comment: Optional[str] = None
 
 
@@ -56,6 +72,36 @@ class AgentNode(BaseNode):
     label: str | None = None
     hasVersion: str | None = None
     source: str | None = None
+
+
+@dataclass(unsafe_hash=True)
+class PlanNode(BaseNode):
+    """The recipe an activity carried out, distinct from whoever ran it.
+
+    PROV separates the plan from the agent executing it. The script at a given
+    commit is the plan; the Python runtime and the person invoking it are
+    agents. Keeping them apart is what makes the graph mappable onto
+    Workflow Run RO-Crate, whose ``instrument`` and ``agent`` are distinct slots.
+    """
+
+    label: str | None = None
+    hasVersion: str | None = None
+    source: str | None = None
+    # Prospective structure: plans this plan depends on. Populated only when
+    # emit_plan_graph is enabled.
+    requires: tuple[str, ...] | None = None
+
+
+@dataclass(unsafe_hash=True)
+class PersonNode(BaseNode):
+    name: str | None = None
+    email: str | None = None
+
+
+@dataclass(unsafe_hash=True)
+class AssociationNode(BaseNode):
+    agent: AgentNode | JSONLDRef | None = None
+    hadPlan: PlanNode | JSONLDRef | None = None
 
 
 @dataclass(unsafe_hash=True)
@@ -71,6 +117,9 @@ class FileEntity(BaseNode):
     extent: int | None = None
     modified: datetime | None = None
     identifier: str | None = None
+    # Bare hex alongside the algorithm-qualified `identifier`, so a consumer can
+    # read the checksum without parsing a prefix out of an opaque string.
+    sha256: str | None = None
     wasGeneratedBy: ActivityNode | JSONLDRef | None = None
 
 
@@ -256,6 +305,119 @@ def _base(iri: str | None) -> str:
     return iri if iri.endswith(("/", "#")) else iri + "/"
 
 
+def apply_context(node: RDFMixin, context: dict) -> RDFMixin:
+    """Bind a document-level context to a node and rebuild its term aliases."""
+
+    node.__context__ = context
+    if hasattr(node, "_build_aliases"):
+        node._build_aliases()
+    return node
+
+
+@dataclass(frozen=True)
+class PlanGraph:
+    """Prospective structure for one rule: its name and the rules it needs.
+
+    Kept separate from the retrospective record so a document can state what
+    the workflow *is* without asserting that any of it ran.
+    """
+
+    rule: str
+    requires: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class IriMinter:
+    """Mints the identifiers for one provenance document.
+
+    Holds the base-IRI policy shared by the decorator API and the Snakemake
+    bridge, so both name things the same way.
+    """
+
+    base_iri: str | None
+    prefix: str
+    pinned: bool
+    file_segment: str = ""
+    repo_root: Path | None = None
+
+    def mint(self, tail: str) -> str:
+        return f"{self.prefix}{tail}"
+
+    def file(self, path: Path | str) -> str:
+        path = Path(path)
+        if not self.pinned:
+            return self.mint(f"{self.file_segment}{path.as_posix()}")
+
+        # A `blob:` identifier expands to <repo>/blob/<commit>/<path>, so it is
+        # only meaningful for paths inside the repository. Anything else gets a
+        # file: URI rather than an identifier that looks resolvable and isn't.
+        if path.is_absolute():
+            if self.repo_root is None:
+                return path.as_uri()
+            try:
+                path = path.relative_to(self.repo_root)
+            except ValueError:
+                return path.as_uri()
+        return f"blob:{path.as_posix()}"
+
+
+def working_tree_is_dirty() -> bool:
+    """Whether the checkout has uncommitted changes.
+
+    Matters because a commit SHA recorded next to a dirty tree describes code
+    that is not what actually ran.
+    """
+
+    return bool(_safe_cmd(["git", "status", "--porcelain"]))
+
+
+def resolve_iris(
+    base_iri: str | None,
+    context: dict,
+    *,
+    file_segment: str = "",
+    origin: str | None = None,
+    revision: str | None = None,
+    forge_profiles: str | None = None,
+) -> IriMinter:
+    """Decide how a document's identifiers are minted.
+
+    An explicit ``base_iri`` is used as-is. Failing that, a remote on a known
+    forge (see ``forges.toml``) makes the repository URL the document's
+    ``@base`` and pins file identifiers to the current commit through a
+    ``blob:`` prefix — pinning to the commit rather than the branch matters,
+    since a branch URL names different bytes after every push. With neither,
+    identifiers stay relative to the document, which is preferable to inventing
+    a namespace that would collide across unrelated workflows.
+
+    ``context`` is mutated in place when the forge heuristic applies. ``origin``
+    and ``revision`` let a caller reuse git lookups it has already made.
+    """
+
+    if base_iri:
+        return IriMinter(base_iri, _base(base_iri), pinned=False, file_segment=file_segment)
+
+    origin = origin or _safe_cmd(["git", "config", "--get", "remote.origin.url"])
+    match = resolve_forge(origin, load_forges(forge_profiles))
+    if match is None:
+        return IriMinter(None, "", pinned=False, file_segment=file_segment)
+
+    profile, repo = match
+    revision = revision or _safe_cmd(["git", "rev-parse", "HEAD"]) or _safe_cmd(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"]
+    )
+    context["@base"] = f"{repo}#"
+    context["blob"] = profile.blob_prefix(repo, revision)
+    root = _safe_cmd(["git", "rev-parse", "--show-toplevel"])
+    return IriMinter(
+        repo,
+        "",
+        pinned=True,
+        file_segment=file_segment,
+        repo_root=Path(root) if root else None,
+    )
+
+
 # ---------- Public Prov builder ----------
 @dataclass
 class Prov:
@@ -273,10 +435,13 @@ class Prov:
         run_id: str,
         t0: datetime,
         t1: datetime,
-        inputs: list[Path],
-        outputs: list[Path],
+        inputs: list[ArtifactRef],
+        outputs: list[ArtifactRef],
         results: list[RDFMixin],
         success: bool = True,
+        record_user: bool = False,
+        forge_profiles: str | None = None,
+        plan_graph: PlanGraph | None = None,
     ):
         """Assemble a provenance graph from rule execution details.
 
@@ -286,11 +451,15 @@ class Prov:
             run_id (str): Unique identifier for this run, typically timestamp-based.
             t0 (datetime): Start time of the rule execution.
             t1 (datetime): End time of the rule execution.
-            inputs (list[Path]): Input files consumed by the rule.
-            outputs (list[Path]): Output files produced by the rule.
+            inputs (list[ArtifactRef]): Entities consumed by the rule. Local
+                refs are hashed and stat-ed; external refs are cited by IRI.
+            outputs (list[ArtifactRef]): Entities produced by the rule.
             results (list[RDFMixin]): Optional result graphs to embed alongside
                 provenance records.
             success (bool): Whether the rule completed successfully.
+            record_user (bool): Record the invoking user from ``git config`` as
+                a ``schema:Person`` agent. Off by default, since provenance
+                documents are routinely committed and published.
 
         Returns:
             Prov: A populated :class:`Prov` instance ready for serialization.
@@ -301,60 +470,114 @@ class Prov:
                 prov = Prov.create(
                     base_iri=None,
                     name="uppercase",
-                    run_id="20240101T120000",
+                    run_id="20240101T120000-1a2b3c4d",
                     t0=start,
                     t1=end,
-                    inputs=[Path("input.txt")],
-                    outputs=[Path("output.txt")],
+                    inputs=[ArtifactRef.local("input.txt")],
+                    outputs=[ArtifactRef.local("output.txt")],
                     results=[],
                 )
-        """        
-        def _iri(tail: str) -> str:
-            return f"{_base(base_iri)}{tail}"
-
-        def _file_iri(path: Path | str) -> str:
-            return _iri(Path(path).as_posix())
-
+        """
         script = _caller_script()
         commit = _safe_cmd(["git", "rev-parse", "HEAD"])
         origin = _safe_cmd(["git", "config", "--get", "remote.origin.url"])
 
         context = deepcopy(COMMON_CONTEXT)
+        minter = resolve_iris(
+            base_iri,
+            context,
+            origin=origin,
+            revision=commit,
+            forge_profiles=forge_profiles,
+        )
+        base_iri = minter.base_iri
+        _iri, _file_iri = minter.mint, minter.file
 
         def _apply_context(node: RDFMixin):
-            node.__context__ = context
-            if hasattr(node, "_build_aliases"):
-                node._build_aliases()
-            return node
+            return apply_context(node, context)
 
-        # Default Github URL heuristic
-        if not base_iri and origin and "github.com" in origin:
-            branch = _safe_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-            base_iri = origin.replace(".git", "")
+        # A REPL or notebook yields names like "<stdin>" or "<ipython-input-3>",
+        # which are not legal in an IRI.
+        script_ref = quote(script.name, safe="")
 
-            context["@base"] = f"{base_iri}#"
-            context["blob"] = f"{base_iri}/blob/{branch}/"
-
-            def _iri(tail: str) -> str:
-                return tail # only suffix, put @base in context
-
-            def _file_iri(path: Path) -> str:
-                return f'blob:{Path(path).as_posix()}' # blob prefix
-
-        activity_id = _file_iri(f"{script.name}#{name}-{run_id}")
-        agent_id = _file_iri(script.name)
+        activity_id = _file_iri(f"{script_ref}#{name}-{run_id}")
+        plan_id = _file_iri(script_ref)
         graph_id = _iri(f"graph-{name}")
+        assoc_id = f"{activity_id}-association"
         env_id: str | None = None
 
         activity_used = []
 
-        # Agent
+        # Plan: the script at a commit. This is prospective provenance - the
+        # recipe - and is deliberately not an agent.
+        #
+        # A bare SHA next to a modified checkout would name code that is not
+        # what ran, so a dirty tree is marked the way `git describe --dirty`
+        # does, and cannot be mistaken for a clean revision.
+        version = commit or None
+        if commit and working_tree_is_dirty():
+            version = f"{commit}-dirty"
+            logging.warning(
+                "Working tree has uncommitted changes; recording plan version as %s. "
+                "Entity IRIs pinned to %s may not reflect what actually ran.",
+                version,
+                commit[:12],
+            )
+
+        plan = _apply_context(PlanNode(
+            id=plan_id,
+            type=("prov:Plan", "prov:Entity", "schema:SoftwareSourceCode"),
+            label=script.name,
+            hasVersion=version,
+            source=origin if origin else None,
+        ))
+
+        # Optional prospective structure: the rule as a plan in its own right,
+        # linked to the plans it depends on via dct:requires.
+        rule_plan: PlanNode | None = None
+        if plan_graph is not None:
+            def _rule_plan_iri(rule: str) -> str:
+                return _file_iri(f"{script_ref}#rule-{quote(rule, safe='')}")
+
+            rule_plan = _apply_context(PlanNode(
+                id=_rule_plan_iri(plan_graph.rule),
+                type=("prov:Plan", "prov:Entity"),
+                label=plan_graph.rule,
+                source=plan_id,
+                requires=tuple(_rule_plan_iri(r) for r in plan_graph.requires) or None,
+            ))
+
+        # Agent: the runtime that actually executed the plan.
+        py_version = platform.python_version()
+        agent_id = _iri(f"agent-python-{py_version}")
         agent = _apply_context(AgentNode(
             id=agent_id,
-            type=("prov:Agent", "prov:SoftwareAgent", "schema:SoftwareSourceCode"),
-            label=script.name,
-            hasVersion=commit or None,
-            source=origin if origin else None,
+            type=("prov:Agent", "prov:SoftwareAgent", "schema:SoftwareApplication"),
+            label=f"{platform.python_implementation()} {py_version}",
+            hasVersion=py_version,
+        ))
+
+        # Agent: the person who ran it, when git can tell us and the caller
+        # opted in. This is the slot Workflow Run RO-Crate's `agent` expects
+        # (a Person, not software).
+        person: PersonNode | None = None
+        user_name = _safe_cmd(["git", "config", "--get", "user.name"]) if record_user else None
+        user_email = _safe_cmd(["git", "config", "--get", "user.email"]) if record_user else None
+        if user_name or user_email:
+            person = _apply_context(PersonNode(
+                id=f"mailto:{user_email}" if user_email else _iri("agent-user"),
+                type=("prov:Agent", "prov:Person", "schema:Person"),
+                name=user_name or None,
+                email=user_email or None,
+            ))
+
+        # Qualified association ties the executing agent to the plan it ran.
+        association = _apply_context(AssociationNode(
+            id=assoc_id,
+            type="prov:Association",
+            agent=person.id if person is not None else agent_id,
+            # The rule is the more precise plan when we know it.
+            hadPlan=rule_plan.id if rule_plan is not None else plan_id,
         ))
 
         # Graph entity (metadata entry)
@@ -366,57 +589,59 @@ class Prov:
             generatedAtTime=t1,
         ))
 
-        # Inputs
-        input_nodes: list[FileEntity] = []
-        from .paths import CachedDownload  # local import to avoid cycle
+        def _entity_id(ref: ArtifactRef) -> str:
+            return ref.id if ref.is_external else _file_iri(ref.path)
 
-        for p in inputs:
-            if not p.exists():
-                continue
-            info = _path_info(p)
-            fid = _file_iri(p)
-            entity = FileEntity(
-                id=fid,
-                type="prov:Entity",
-                format=info["format"],
-                extent=info["size"],
-                modified=info["modified"] if info.get("modified") else None,
-                identifier=f"sha256:{info['sha256']}" if info.get("sha256") else None,
+        def _entity(ref: ArtifactRef, *, generated_by: str | None = None) -> FileEntity:
+            digest = ref.digest
+            node = FileEntity(
+                id=_entity_id(ref),
+                type=ref.types if len(ref.types) > 1 else ref.types[0],
+                format=ref.media_type,
+                extent=ref.extent,
+                modified=ref.modified,
+                identifier=digest,
+                sha256=digest[len("sha256:"):] if (digest or "").startswith("sha256:") else None,
+                wasGeneratedBy=generated_by,
             )
+            if ref.label:
+                node._extra = getattr(node, "_extra", {})
+                node._extra["label"] = ref.label
+            if ref.extra:
+                node._extra = getattr(node, "_extra", {})
+                node._extra.update(ref.extra)
+            return _apply_context(node)
 
-            if isinstance(p, CachedDownload):
-                extras: dict[str, Any] = {}
-                extras[p.transform] = p.url
-                extras.setdefault("rdfs:seeAlso", p.url)
-                if p.headers:
-                    extras["comment"] = f"download headers={p.headers}"
-                entity._extra = getattr(entity, "_extra", {})
-                entity._extra.update(extras)
-
-            input_nodes.append(_apply_context(entity))
+        # Inputs. A missing input still gets an entity node: dropping it would
+        # silently delete an edge the caller explicitly declared.
+        input_nodes: list[FileEntity] = []
+        for ref in inputs:
+            if ref.is_external or ref.exists:
+                input_nodes.append(_entity(ref.resolve()))
+            else:
+                logging.warning(
+                    "Input %s does not exist; recording it without content metadata",
+                    ref.path,
+                )
+                input_nodes.append(_entity(ref))
 
         if input_nodes:
             activity_used = input_nodes
 
-        # Outputs
+        # Outputs. Unlike inputs, a declared output that is missing after a
+        # successful run means the rule lied about what it produced.
         output_nodes: list[FileEntity] = []
-        for p in outputs:
-            if not p.exists():
-                continue
-            info = _path_info(p)
-            oid = _file_iri(p)
-            output_nodes.append(
-                _apply_context(
-                    FileEntity(
-                        id=oid,
-                        type="prov:Entity",
-                        format=info["format"],
-                        extent=info["size"],
-                        modified=info["modified"] if info.get("modified") else None,
-                        wasGeneratedBy=activity_id,
-                    )
+        for ref in outputs:
+            if ref.is_external or ref.exists:
+                output_nodes.append(_entity(ref.resolve(), generated_by=activity_id))
+            elif success:
+                raise UnresolvedArtifactError(
+                    f"Rule {name!r} reported success but declared output {ref.path} "
+                    "does not exist. Either the rule failed to write it or the "
+                    "output declaration is wrong."
                 )
-            )
+            # On failure the output legitimately does not exist; asserting it was
+            # generated by the failed activity would be false.
 
         # Environment + deps
         env_node: EnvNode | None = None
@@ -460,9 +685,16 @@ class Prov:
             type="prov:Activity",
             startedAtTime=t0,
             endedAtTime=t1,
-            wasAssociatedWith=agent_id,
+            wasAssociatedWith=(
+                (agent_id, person.id) if person is not None else agent_id
+            ),
+            qualifiedAssociation=assoc_id,
             comment=("task failed" if not success else None),
             used=tuple(activity_used),
+            # Stated forward as well as inversely on each entity: prov:used and
+            # prov:generated are the pair a consumer reads off the activity,
+            # and they map straight onto RO-Crate's `object`/`result`.
+            generated=tuple(node.id for node in output_nodes) or None,
         ))
 
         return cls(
@@ -470,7 +702,11 @@ class Prov:
             name=name,
             provenance=[
                 activity,
+                association,
+                plan,
+                *([rule_plan] if rule_plan is not None else []),
                 agent,
+                *([person] if person is not None else []),
                 *output_nodes,
                 *([env_node] if env_node else []),
             ],
@@ -495,15 +731,20 @@ class Prov:
                 merged = Prov.merge([prov_a, prov_b])
         """
         base_iri, name, all_provenance, all_results = None, None, [], []
-        env_ids: set[str] = set()
+        # Descriptor nodes are per-run singletons: every rule in a merged
+        # document names the same plan, runtime and user. Emit each once.
+        # Activities and entities are deliberately not deduplicated, since the
+        # same file can appear with different roles across rules.
+        singletons = (EnvNode, PlanNode, AgentNode, PersonNode)
+        seen_ids: set[str] = set()
         for prov in provs:
             base_iri = prov.base_iri
             name = prov.name
             for node in prov.provenance:
-                if isinstance(node, EnvNode):
-                    if node.id in env_ids:
+                if isinstance(node, singletons):
+                    if node.id in seen_ids:
                         continue
-                    env_ids.add(node.id)
+                    seen_ids.add(node.id)
                 all_provenance.append(node)
             all_results.extend(prov.results)
         merged_context = deepcopy(provs[0].context) if provs else deepcopy(COMMON_CONTEXT)

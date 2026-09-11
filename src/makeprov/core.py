@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,8 +13,9 @@ from parse import compile as parse_compile, Parser
 
 from .config import ProvenanceConfig, ProvFormat, Frame
 from .paths import CachedDownload, InDir, InPath, OutDir, OutPath
-from .prov import Prov, ProvenanceWriteError
+from .prov import PlanGraph, Prov, ProvenanceWriteError
 from .rdfmixin import RDFMixin
+from .refs import ArtifactRef
 
 try:
     import rdflib  # optional
@@ -224,6 +226,53 @@ def needs_update(outputs, deps) -> bool:
     return newest_dep > oldest_out
 
 
+def _path_ref(path: Path) -> ArtifactRef:
+    """Convert a declared path into an :class:`ArtifactRef`."""
+
+    extra: dict[str, Any] = {}
+    if isinstance(path, CachedDownload):
+        # As {"@id": ...}, not a bare string: prov:wasDerivedFrom and
+        # rdfs:seeAlso both range over resources, so a plain string would
+        # serialize as a literal and the link would not be traversable.
+        extra[path.transform] = {"@id": path.url}
+        extra.setdefault("rdfs:seeAlso", {"@id": path.url})
+        if path.headers:
+            extra["comment"] = f"download headers={path.headers}"
+    return ArtifactRef.local(path, extra=extra)
+
+
+def _plan_graph(rule_name: str, inputs: list[Path], session: Session) -> PlanGraph:
+    """Describe the executing rule and the rules producing its inputs.
+
+    Uses the same resolver as :func:`build`, so the prospective structure agrees
+    with what would actually be built.
+    """
+
+    requires: list[str] = []
+    for path in inputs:
+        try:
+            upstream, _ = resolve_target(str(path), session=session)
+        except RuntimeError:
+            continue  # not produced by a rule: a source file, not a step
+        if upstream.name != rule_name and upstream.name not in requires:
+            requires.append(upstream.name)
+    return PlanGraph(rule=rule_name, requires=tuple(requires))
+
+
+def _run_id(config: ProvenanceConfig, t0: datetime) -> str:
+    """Mint a unique identifier for one run of a rule.
+
+    A timestamp alone is not unique. Minute-resolution stamps meant two runs of
+    the same rule within the same minute produced identical activity IRIs and
+    collapsed into a single node. ``config.run_id`` lets a caller supply an
+    external run identity instead, such as a CI job or MLflow run id.
+    """
+
+    if config.run_id:
+        return config.run_id
+    return f"{t0:%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}"
+
+
 def _is_kind_annotation(ann: Any, cls: type) -> bool:
     """Check whether a type annotation represents a specific path marker.
 
@@ -338,12 +387,15 @@ def rule(
 
         in_params: list[str] = []
         out_params: list[str] = []
+        ref_params: list[str] = []
         for p in sig.parameters.values():
             ann = hints.get(p.name, p.annotation)
             if _is_kind_annotation(ann, InPath):
                 in_params.append(p.name)
             if _is_kind_annotation(ann, OutPath):
                 out_params.append(p.name)
+            if _is_kind_annotation(ann, ArtifactRef):
+                ref_params.append(p.name)
 
         if not out_params and not phony:
             raise ValueError(
@@ -412,6 +464,10 @@ def rule(
                 context=context if context is not None else base_config.context,
                 context_url=base_config.context_url,
                 strict=strict if strict is not None else base_config.strict,
+                run_id=base_config.run_id,
+                record_user=base_config.record_user,
+                forge_profiles=base_config.forge_profiles,
+                emit_plan_graph=base_config.emit_plan_graph,
             )
 
             in_files: list[Path] = []
@@ -477,6 +533,14 @@ def rule(
                 if isinstance(val, InDir):
                     in_files.extend(Path(p) for p in val.children)
 
+            # External references never participate in staleness checks: they
+            # have no local mtime to compare against.
+            extra_refs: list[ArtifactRef] = []
+            for pname in ref_params:
+                val = bound.arguments.get(pname)
+                if isinstance(val, ArtifactRef):
+                    extra_refs.append(val)
+
             if not phony and not rule_config.force and not needs_update(out_files, in_files):
                 logging.info("Skipping %s (up to date)", logical_name)
                 return None
@@ -527,13 +591,20 @@ def rule(
                     prov = Prov.create(
                         base_iri=rule_config.base_iri,
                         name=logical_name,
-                        run_id=t0.strftime("%Y%m%dT%H%M"),
+                        run_id=_run_id(rule_config, t0),
                         t0=t0,
                         t1=t1,
-                        inputs=list(in_files),
-                        outputs=list(out_files),
+                        inputs=[_path_ref(p) for p in in_files] + extra_refs,
+                        outputs=[_path_ref(p) for p in out_files],
                         results=results,
                         success=exc is None,
+                        record_user=rule_config.record_user,
+                        forge_profiles=rule_config.forge_profiles,
+                        plan_graph=(
+                            _plan_graph(logical_name, in_files, sess)
+                            if rule_config.emit_plan_graph
+                            else None
+                        ),
                     )
                     if prov_path is not None:
                         rule_prov_path = prov_path
@@ -566,6 +637,10 @@ def rule(
                         )
                 except Exception as prov_exc:  # noqa: BLE001
                     if rule_config.strict:
+                        # Already a provenance error with a precise message
+                        # (e.g. an unresolved output); don't bury it in a wrapper.
+                        if isinstance(prov_exc, ProvenanceWriteError):
+                            raise
                         raise ProvenanceWriteError(
                             f"Failed to write provenance for {logical_name!r}: {prov_exc}"
                         ) from prov_exc

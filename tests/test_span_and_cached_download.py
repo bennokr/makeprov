@@ -1,9 +1,11 @@
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
 from makeprov import CachedDownload, OutPath, ProvenanceConfig, rule, span
+from makeprov.paths import CacheIntegrityError
 from makeprov.prov import Prov
 
 
@@ -85,9 +87,59 @@ def test_cached_download_records_source(monkeypatch, tmp_path):
         used_entities = []
         for act in activities:
             used_entities.extend([u for u in act.get("used", []) if isinstance(u, dict)])
+        # Recorded as node references, not string literals: both properties
+        # range over resources, so a bare string would not be traversable.
         assert any(
-            e.get("rdfs:seeAlso") == url or e.get("prov:wasDerivedFrom") == url
+            e.get("rdfs:seeAlso") == {"@id": url}
+            or e.get("prov:wasDerivedFrom") == {"@id": url}
             for e in used_entities
         )
     finally:
         ProvenanceConfig.set(original)
+
+
+def test_cached_download_verifies_declared_digest(tmp_path):
+    """A pinned download must not be provenanced as if it were intact."""
+
+    cache = tmp_path / "meta.json"
+    cache.write_text("tampered", encoding="utf-8")
+
+    pinned = CachedDownload(
+        "https://example.org/meta.json",
+        str(cache),
+        sha256="0" * 64,
+    )
+
+    with pytest.raises(CacheIntegrityError, match="does not match its declared digest"):
+        pinned.open()
+
+
+def test_cached_download_accepts_matching_digest(tmp_path):
+    cache = tmp_path / "meta.json"
+    cache.write_text("payload", encoding="utf-8")
+    digest = hashlib.sha256(b"payload").hexdigest()
+
+    pinned = CachedDownload("https://example.org/meta.json", str(cache), sha256=digest)
+
+    with pinned.open() as handle:
+        assert handle.read() == "payload"
+
+
+def test_cached_download_accepts_prefixed_digest(tmp_path):
+    cache = tmp_path / "meta.json"
+    cache.write_text("payload", encoding="utf-8")
+    digest = hashlib.sha256(b"payload").hexdigest()
+
+    pinned = CachedDownload(
+        "https://example.org/meta.json", str(cache), sha256=f"sha256:{digest}"
+    )
+    pinned.verify()  # must not raise
+
+
+def test_cached_download_without_digest_is_unverified(tmp_path):
+    cache = tmp_path / "meta.json"
+    cache.write_text("anything", encoding="utf-8")
+
+    unpinned = CachedDownload("https://example.org/meta.json", str(cache))
+    with unpinned.open() as handle:
+        assert handle.read() == "anything"

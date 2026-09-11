@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -159,10 +160,27 @@ class InPath(ProvPath):
         return super().open(mode, *args, **kwargs)
 
 
-class CachedDownload(InPath):
-    """Input wrapper that lazily downloads and records source metadata."""
+class CacheIntegrityError(RuntimeError):
+    """Raised when a cached download does not match its declared digest."""
 
-    def __new__(cls, url: str, cache_path: str | os.PathLike[str], *, headers=None, transform: str | None = "prov:wasDerivedFrom"):
+
+class CachedDownload(InPath):
+    """Input wrapper that lazily downloads and records source metadata.
+
+    Passing ``sha256`` pins the remote resource: the cached copy is verified
+    against it, so a truncated download or a stale cache is caught rather than
+    silently provenanced as if it were the intended input.
+    """
+
+    def __new__(
+        cls,
+        url: str,
+        cache_path: str | os.PathLike[str],
+        *,
+        headers=None,
+        transform: str | None = "prov:wasDerivedFrom",
+        sha256: str | None = None,
+    ):
         self = super().__new__(cls, cache_path)
         return self
 
@@ -173,17 +191,35 @@ class CachedDownload(InPath):
         *,
         headers: dict | None = None,
         transform: str | None = "prov:wasDerivedFrom",
+        sha256: str | None = None,
     ):
         super().__init__()
         self.url = url
         self.headers = headers or {}
         self.transform = transform or "prov:wasDerivedFrom"
+        self.sha256 = sha256.removeprefix("sha256:") if sha256 else None
+        self._verified = False
+
+    def verify(self) -> None:
+        """Check the cached bytes against the declared digest, once."""
+
+        if not self.sha256 or self._verified or not self.exists():
+            return
+        actual = hashlib.sha256(Path(self).read_bytes()).hexdigest()
+        if actual != self.sha256:
+            raise CacheIntegrityError(
+                f"Cached copy of {self.url} does not match its declared digest: "
+                f"expected sha256:{self.sha256}, got sha256:{actual}. "
+                f"Delete {self} to re-download."
+            )
+        self._verified = True
 
     def open(self, mode: str = "r", *args, **kwargs):
         if any(x in mode for x in ("w", "a", "+")):
             return super().open(mode, *args, **kwargs)
         if not self.exists():
             download_file(self.url, str(self), headers=self.headers or None)
+        self.verify()
         return super().open(mode, *args, **kwargs)
 
 class OutPath(ProvPath):

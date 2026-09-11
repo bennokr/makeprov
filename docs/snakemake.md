@@ -97,6 +97,53 @@ job-to-job edges are recorded using `prov:wasInformedBy` whenever Snakemake's
 D3 DAG provides the necessary IDs. File metadata such as hashes, MIME types and
 timestamps are captured from the filesystem when available.
 
+The bridge uses the same Plan/Agent split as the decorator API. Each Snakemake
+*rule* becomes a `prov:Plan` (`<base>rule/<name>`), Snakemake itself is
+the `prov:SoftwareAgent`, and every job activity carries a
+`prov:qualifiedAssociation` tying the agent to the rule it executed. The shell
+command stays on the activity rather than the plan, since `--detailed-summary`
+may report it after wildcard expansion, making it a property of that particular
+run rather than of the recipe.
+
+Pass `--record-user` to additionally record the git user as a `schema:Person`
+agent; as in the decorator API this is off by default.
+
+### Identifiers
+
+The bridge and the decorator API share one identifier policy, implemented by
+`makeprov.prov.resolve_iris`, and resolve it in this order:
+
+1. An explicit `base_iri` is used as-is:
+   `https://example.org/wf/rule/concat`.
+2. Otherwise, if the working tree has a GitHub remote, the repository URL
+   becomes the document's `@base` and files get a `blob:` prefix pinned to the
+   current **commit**, so `README.md` becomes
+   `https://github.com/you/repo/blob/<sha>/README.md`. Pinning to the commit
+   rather than the branch matters: a branch URL names different bytes after
+   every push.
+3. Otherwise identifiers stay *relative* (`rule/concat`, `job/1`,
+   `file/data/a.txt`) and resolve against the document's base.
+
+A `blob:` identifier expands to `<repo>/blob/<commit>/<path>`, so it is only
+used for files inside the repository. An absolute path within the checkout is
+rewritten to its repo-relative form; anything outside gets a `file:` URI rather
+than an identifier that looks resolvable but isn't.
+
+Set `base_iri` whenever you intend to publish or merge the document outside the
+repository it was produced in:
+
+```bash
+makeprov-snakemake --prov-path prov/snakemake \
+  -c 'base_iri = "https://example.org/runs/2026-09-10/"' \
+  -- --snakefile Snakefile --nolock
+```
+
+The bridge deliberately does not invent a URN namespace as a fallback. RFC 8141
+requires a URN's namespace identifier to be registered with IANA, so a scheme
+like `urn:snakemake:` names no real namespace, and any invented namespace would
+also make two unrelated workflows with a rule named `concat` claim the same
+identifier.
+
 Use the standard `makeprov` serialization helpers to post-process the output:
 
 ```python

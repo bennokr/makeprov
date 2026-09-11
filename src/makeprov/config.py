@@ -74,6 +74,20 @@ class ProvenanceConfig(Config):
     # When True (default), a failure to write provenance raises
     # ProvenanceWriteError instead of only logging a warning.
     strict: bool = True
+    # Externally supplied run identity (a CI job id, an MLflow run id). When
+    # unset, each run gets a fresh unique id.
+    run_id: str | None = None
+    # Record the invoking user (from git config) as a schema:Person agent.
+    # Off by default: provenance files are routinely committed and published,
+    # and a name and email address are personal data the caller should opt into
+    # publishing rather than emit by accident.
+    record_user: bool = False
+    # Extra forge profiles (TOML), for self-hosted git hosts. See forges.toml.
+    forge_profiles: str | None = None
+    # Emit prospective structure: the rule dependency graph as prov:Plan nodes
+    # linked by dct:requires. Off by default, so documents describe only what
+    # actually ran.
+    emit_plan_graph: bool = False
 
 
 # initialize global
@@ -141,6 +155,27 @@ def main(
         help="Render dependency graph for TARGET in DOT format",
         metavar="TARGET",
     )
+    parent.add_argument(
+        "--plan-graph",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Also emit prospective structure: the rule dependency graph as "
+            "prov:Plan nodes linked by dct:requires (off by default)"
+        ),
+    )
+    parent.add_argument(
+        "--record-user",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Record the git user as a schema:Person agent (off by default)",
+    )
+    parent.add_argument(
+        "--forge-profiles",
+        default=None,
+        help="TOML file of extra forge profiles for self-hosted git hosts",
+        metavar="PATH",
+    )
 
     def apply_globals(argv):
         ns, _ = parent.parse_known_args(argv)
@@ -149,6 +184,13 @@ def main(
         working_conf = replace(conf_obj)
         for toml_ref in ns.conf:
             working_conf.apply(toml_ref)
+        # Explicit flags win over --conf.
+        if ns.plan_graph is not None:
+            working_conf.emit_plan_graph = ns.plan_graph
+        if ns.record_user is not None:
+            working_conf.record_user = ns.record_user
+        if ns.forge_profiles is not None:
+            working_conf.forge_profiles = ns.forge_profiles
         if conf_obj is ProvenanceConfig.get():
             ProvenanceConfig.set(working_conf)
             updated_conf = ProvenanceConfig.get()

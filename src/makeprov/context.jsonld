@@ -15,7 +15,14 @@
         "@type": "@id",
         "@container": "@set"
     },
+    "qualifiedAssociation": {"@id": "prov:qualifiedAssociation", "@type": "@id"},
+    "hadPlan": {"@id": "prov:hadPlan", "@type": "@id"},
+    "agent": {"@id": "prov:agent", "@type": "@id"},
+    "name": "schema:name",
+    "email": "schema:email",
     "used": {"@id": "prov:used", "@type": "@id", "@container": "@set"},
+    "generated": {"@id": "prov:generated", "@type": "@id", "@container": "@set"},
+    "sha256": "schema:sha256",
     "wasGeneratedBy": {"@id": "prov:wasGeneratedBy", "@type": "@id"},
     "wasAttributedTo": {
         "@id": "prov:wasAttributedTo",
