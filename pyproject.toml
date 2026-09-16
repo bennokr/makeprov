@@ -8,7 +8,8 @@ version = "0.7.0"
 description = "A PROV/JSON-LD provenance tracking library for Python scripts, with an optional Snakemake bridge"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Benno Kruit", email = "b.b.kruit@amsterdamumc.nl" }]
 keywords = ["provenance", "prov", "rdf", "json-ld", "snakemake"]
 classifiers = [
@@ -16,7 +17,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 dependencies = ["parse>=1.20"]

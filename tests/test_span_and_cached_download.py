@@ -121,6 +121,7 @@ def test_cached_download_accepts_matching_digest(tmp_path):
 
     pinned = CachedDownload("https://example.org/meta.json", str(cache), sha256=digest)
 
+    assert pinned == cache
     with pinned.open() as handle:
         assert handle.read() == "payload"
 

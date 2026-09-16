@@ -193,7 +193,11 @@ class CachedDownload(InPath):
         transform: str | None = "prov:wasDerivedFrom",
         sha256: str | None = None,
     ):
-        super().__init__()
+        # Python 3.12 moved pathlib path initialization from __new__ to
+        # __init__. On 3.11 the inherited initializer is object.__init__, which
+        # must not receive the path argument.
+        if sys.version_info >= (3, 12):
+            super().__init__(cache_path)
         self.url = url
         self.headers = headers or {}
         self.transform = transform or "prov:wasDerivedFrom"
