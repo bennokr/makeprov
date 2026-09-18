@@ -10,6 +10,7 @@
     "provenance": "@graph",
     "startedAtTime": {"@id": "prov:startedAtTime", "@type": "xsd:dateTime"},
     "endedAtTime": {"@id": "prov:endedAtTime", "@type": "xsd:dateTime"},
+    "duration": {"@id": "schema:duration", "@type": "xsd:duration"},
     "wasAssociatedWith": {
         "@id": "prov:wasAssociatedWith",
         "@type": "@id",

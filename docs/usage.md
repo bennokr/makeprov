@@ -178,6 +178,23 @@ def build_site(
 Invoking ``build("site/1/")`` runs the fragment rule, writes directory outputs,
 and emits a single merged provenance dataset for the entire workflow.
 
+## Opt-in rule metadata
+
+Annotate ordinary arguments with `ProvMeta[T]` to save their bound values as
+`schema:additionalProperty` entries on the activity. Defaults are included;
+unannotated arguments (such as credentials) are not captured. Metadata must
+be JSON-serializable; dictionaries, lists, and `None` use JSON-LD 1.1 `@json`
+typed values. Every activity also includes `schema:duration` as an ISO 8601
+duration derived from its existing timestamps.
+
+```python
+from makeprov import OutPath, ProvMeta, rule
+
+@rule()
+def predict(out: OutPath, model_id: ProvMeta[str], api_key: str):
+    out.write_text(model_id)
+```
+
 ## Scoped spans and explicit outputs
 
 Use :func:`makeprov.span` to bracket arbitrary work in its own provenance

@@ -60,6 +60,7 @@ class BaseNode(RDFMixin):
 class ActivityNode(BaseNode):
     startedAtTime: datetime | None = None
     endedAtTime: datetime | None = None
+    duration: str | None = None
     wasAssociatedWith: AgentNode | JSONLDRef | None = None
     qualifiedAssociation: AssociationNode | JSONLDRef | None = None
     used: tuple[FileEntity | JSONLDRef] | None = None
@@ -439,6 +440,9 @@ class Prov:
         outputs: list[ArtifactRef],
         results: list[RDFMixin],
         success: bool = True,
+        metadata: dict[str, Any] | None = None,
+        activity_id: str | None = None,
+        parent_id: str | None = None,
         record_user: bool = False,
         forge_profiles: str | None = None,
         plan_graph: PlanGraph | None = None,
@@ -500,7 +504,7 @@ class Prov:
         # which are not legal in an IRI.
         script_ref = quote(script.name, safe="")
 
-        activity_id = _file_iri(f"{script_ref}#{name}-{run_id}")
+        activity_id = activity_id or _file_iri(f"{script_ref}#{name}-{run_id}")
         plan_id = _file_iri(script_ref)
         graph_id = _iri(f"graph-{name}")
         assoc_id = f"{activity_id}-association"
@@ -685,6 +689,7 @@ class Prov:
             type="prov:Activity",
             startedAtTime=t0,
             endedAtTime=t1,
+            duration=f"PT{(t1 - t0).total_seconds()}S",
             wasAssociatedWith=(
                 (agent_id, person.id) if person is not None else agent_id
             ),
@@ -696,6 +701,20 @@ class Prov:
             # and they map straight onto RO-Crate's `object`/`result`.
             generated=tuple(node.id for node in output_nodes) or None,
         ))
+        if metadata:
+            # Validate here even when writing is deferred by merge=True.
+            json.dumps(metadata, allow_nan=False)
+            activity._extra["schema:additionalProperty"] = [
+                {
+                    "@type": "schema:PropertyValue",
+                    "schema:name": key,
+                    "schema:value": value if isinstance(value, (str, int, float, bool))
+                    else {"@value": value, "@type": "@json"},
+                }
+                for key, value in metadata.items()
+            ]
+        if parent_id:
+            activity._extra["prov:wasInfluencedBy"] = {"@id": parent_id}
 
         return cls(
             base_iri=base_iri,

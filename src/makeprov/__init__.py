@@ -23,10 +23,12 @@ from .core import (
 from .prov import ProvenanceWriteError, UnresolvedArtifactError
 from .rdfmixin import RDFMixin
 from .refs import ArtifactRef
+from .meta import ProvMeta
 from .span import span
 
 __all__ = [
     "ArtifactRef",
+    "ProvMeta",
     "Config",
     "ProvenanceConfig",
     "ProvenanceWriteError",

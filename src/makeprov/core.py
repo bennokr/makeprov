@@ -2,18 +2,28 @@ from __future__ import annotations
 
 import functools
 import inspect
+import json
 import logging
+import os
+import sys
+import tempfile
 import uuid
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, get_args, get_origin, get_type_hints
+from urllib.parse import quote
 
 from parse import compile as parse_compile, Parser
 
 from .config import ProvenanceConfig, ProvFormat, Frame
 from .paths import CachedDownload, InDir, InPath, OutDir, OutPath
-from .prov import PlanGraph, Prov, ProvenanceWriteError
+from .prov import (
+    COMMON_CONTEXT, PlanGraph, Prov, ProvenanceWriteError,
+    _caller_script, resolve_iris,
+)
+from .meta import ProvMeta
 from .rdfmixin import RDFMixin
 from .refs import ArtifactRef
 
@@ -52,6 +62,41 @@ class Session:
     pattern_rules: list[Rule] = field(default_factory=list)
     commands: set[Callable] = field(default_factory=set)
     prov_buffers: list[list[Prov]] = field(default_factory=list)
+    prov_stream: _Stream | None = None
+    active_activities: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _Stream:
+    config: ProvenanceConfig
+    path: Path | None = None
+    started: bool = False
+    failed: bool = False
+
+
+def _stream_line(stream: _Stream, data: dict, destination: Path) -> None:
+    """Append a complete JSON-LD document; never overwrite crash evidence."""
+    if stream.path is None:
+        stream.path = destination.with_suffix(".jsonl")
+    stream.path.parent.mkdir(parents=True, exist_ok=True)
+    with stream.path.open("a" if stream.started else "x", encoding="utf-8") as handle:
+        handle.write(json.dumps(data, ensure_ascii=False) + "\n")
+    stream.started = True
+
+
+def _write_merged(prov: Prov, destination: Path, cfg: ProvenanceConfig) -> Path:
+    """Atomically replace merged provenance, keeping JSONL until it succeeds."""
+    final = destination.with_suffix(".json" if cfg.out_fmt == "json" else ".trig")
+    final.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=final.parent, suffix=final.suffix)
+    os.close(fd)
+    try:
+        written = prov.write(temporary, fmt=cfg.out_fmt, frame=cfg.frame,
+                             context=cfg.context, context_url=cfg.context_url)
+        os.replace(written, final)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    return final
 
 
 # A process-wide Session used implicitly by makeprov.rule()/build() when no
@@ -92,7 +137,8 @@ def _current_prov_buffer(session: Session | None = None) -> list[Prov] | None:
     return sess.prov_buffers[-1]
 
 
-def start_prov_buffer(*, session: Session | None = None) -> None:
+def start_prov_buffer(*, session: Session | None = None,
+                      config: ProvenanceConfig | None = None) -> None:
     """Create a provenance buffer to batch writes.
 
     Buffers capture provenance from multiple rule invocations and emit a single
@@ -103,6 +149,9 @@ def start_prov_buffer(*, session: Session | None = None) -> None:
 
     sess = _get_session(session)
     sess.prov_buffers.append([])
+    cfg = config or ProvenanceConfig.get()
+    if cfg.stream and sess.prov_stream is None:
+        sess.prov_stream = _Stream(cfg)
     logging.debug("Started provenance buffer (depth=%d)", len(sess.prov_buffers))
 
 
@@ -116,6 +165,7 @@ def flush_prov_buffer(
     context_url: str | None = None,
     session: Session | None = None,
     label: str | None = None,
+    success: bool = True,
 ) -> Prov | None:
     """Write or propagate the most recent provenance buffer.
 
@@ -133,13 +183,15 @@ def flush_prov_buffer(
 
     buffer = sess.prov_buffers.pop()
     if not buffer:
+        if not sess.prov_buffers:
+            sess.prov_stream = None
         return None
 
     merged = Prov.merge(buffer)
     if label:
         merged.name = label
 
-    cfg = config or ProvenanceConfig.get()
+    cfg = config or (sess.prov_stream.config if sess.prov_stream else ProvenanceConfig.get())
     fmt_val = fmt if fmt is not None else cfg.out_fmt
     frame_val = frame if frame is not None else cfg.frame
     context_val = context if context is not None else cfg.context
@@ -171,6 +223,18 @@ def flush_prov_buffer(
         return merged
 
     destination = prov_path or cfg.prov_path or Path(cfg.prov_dir) / merged.name
+    stream = sess.prov_stream
+    sess.prov_stream = None
+    if stream is not None:
+        if not success or stream.failed or not cfg.merge:
+            return merged  # Preserve JSONL after failure or when merge=False.
+        _write_merged(merged, Path(destination), replace(
+            cfg, out_fmt=fmt_val, frame=frame_val,
+            context=context_val, context_url=context_url_val,
+        ))
+        if stream.started:
+            stream.path.unlink()
+        return merged
     logging.debug(
         "Flushing provenance to %s (fmt=%s, frame=%s, context=%s, context_url=%s)",
         destination,
@@ -317,6 +381,7 @@ def rule(
     config: ProvenanceConfig | None = None,
     context: bool | None = None,
     merge: bool | None = None,
+    stream: bool | None = None,
     strict: bool | None = None,
     session: Session | None = None,
 ):
@@ -350,6 +415,8 @@ def rule(
         merge (bool | None): When ``True``, buffer provenance for this rule and
             any nested rule calls, emitting a single merged document. Defaults
             to the configured merge behavior.
+        stream (bool | None): Append JSON-LD records to a recovery JSONL file;
+            merge and remove it on successful completion when ``merge=True``.
         strict (bool | None): When ``True`` (the default), a failure to write
             provenance raises :class:`~makeprov.prov.ProvenanceWriteError`
             instead of only logging a warning. Overrides the configured
@@ -388,6 +455,7 @@ def rule(
         in_params: list[str] = []
         out_params: list[str] = []
         ref_params: list[str] = []
+        meta_params: list[str] = []
         for p in sig.parameters.values():
             ann = hints.get(p.name, p.annotation)
             if _is_kind_annotation(ann, InPath):
@@ -396,6 +464,8 @@ def rule(
                 out_params.append(p.name)
             if _is_kind_annotation(ann, ArtifactRef):
                 ref_params.append(p.name)
+            if get_origin(ann) is ProvMeta:
+                meta_params.append(p.name)
 
         if not out_params and not phony:
             raise ValueError(
@@ -461,6 +531,7 @@ def rule(
                 out_fmt=out_fmt if out_fmt is not None else base_config.out_fmt,
                 frame=frame if frame is not None else base_config.frame,
                 merge=merge if merge is not None else base_config.merge,
+                stream=stream if stream is not None else base_config.stream,
                 context=context if context is not None else base_config.context,
                 context_url=base_config.context_url,
                 strict=strict if strict is not None else base_config.strict,
@@ -555,19 +626,49 @@ def rule(
                 return None
 
             buffer_started = False
-            if rule_config.merge and _current_prov_buffer(sess) is None:
-                start_prov_buffer(session=sess)
+            if (rule_config.merge or rule_config.stream) and _current_prov_buffer(sess) is None:
+                start_prov_buffer(session=sess, config=rule_config)
                 buffer_started = True
+            if rule_config.stream and sess.prov_stream is None:
+                sess.prov_stream = _Stream(rule_config)
 
             t0 = datetime.now(timezone.utc)
-            exc: Exception | None = None
+            run_id = _run_id(rule_config, t0)
+            rule_prov_path = Path(prov_path or rule_config.prov_path or
+                                  Path(rule_config.prov_dir) / logical_name)
+            stream_state = sess.prov_stream
+            parent_id = sess.active_activities[-1] if sess.active_activities else None
+            activity_id = None
+            if stream_state is not None:
+                iri_context = deepcopy(COMMON_CONTEXT)
+                minter = resolve_iris(rule_config.base_iri, iri_context,
+                                      forge_profiles=rule_config.forge_profiles)
+                activity_id = minter.file(
+                    f"{quote(_caller_script().name, safe='')}#{logical_name}-{run_id}"
+                )
+                if parent_id is None:
+                    try:
+                        _stream_line(stream_state, {
+                            "@context": iri_context, "id": activity_id,
+                            "type": "prov:Activity", "startedAtTime": t0.isoformat(),
+                        }, rule_prov_path)
+                    except BaseException:
+                        if buffer_started:
+                            sess.prov_buffers.pop()
+                            sess.prov_stream = None
+                        raise
+                sess.active_activities.append(activity_id)
+
+            exc: BaseException | None = None
             result = None
 
             try:
                 result = func(*bound.args, **bound.kwargs)
                 return result
-            except Exception as e:
+            except BaseException as e:
                 exc = e
+                if stream_state is not None:
+                    stream_state.failed = True
                 raise
             finally:
                 t1 = datetime.now(timezone.utc)
@@ -591,13 +692,17 @@ def rule(
                     prov = Prov.create(
                         base_iri=rule_config.base_iri,
                         name=logical_name,
-                        run_id=_run_id(rule_config, t0),
+                        run_id=run_id,
                         t0=t0,
                         t1=t1,
                         inputs=[_path_ref(p) for p in in_files] + extra_refs,
                         outputs=[_path_ref(p) for p in out_files],
                         results=results,
                         success=exc is None,
+                        metadata={key: bound.arguments[key] for key in meta_params
+                                  if key in bound.arguments},
+                        activity_id=activity_id,
+                        parent_id=parent_id,
                         record_user=rule_config.record_user,
                         forge_profiles=rule_config.forge_profiles,
                         plan_graph=(
@@ -606,17 +711,10 @@ def rule(
                             else None
                         ),
                     )
-                    if prov_path is not None:
-                        rule_prov_path = prov_path
-                    elif rule_config.prov_path is not None:
-                        rule_prov_path = rule_config.prov_path
-                    else:
-                        rule_prov_path = Path(rule_config.prov_dir) / logical_name
-
                     target_buffer = _current_prov_buffer(sess)
                     if target_buffer is not None:
                         target_buffer.append(prov)
-                    else:
+                    elif stream_state is None:
                         prov.write(
                             rule_prov_path,
                             fmt=rule_config.out_fmt,
@@ -624,6 +722,9 @@ def rule(
                             context=rule_config.context,
                             context_url=rule_config.context_url,
                         )
+                    if stream_state is not None:
+                        _stream_line(stream_state, prov.to_jsonld(with_context=True),
+                                     rule_prov_path)
 
                     if buffer_started:
                         flush_prov_buffer(
@@ -634,8 +735,13 @@ def rule(
                             context=rule_config.context,
                             context_url=rule_config.context_url,
                             session=sess,
+                            success=exc is None,
                         )
                 except Exception as prov_exc:  # noqa: BLE001
+                    if stream_state is not None:
+                        stream_state.failed = True
+                    if buffer_started and sess.prov_buffers:
+                        flush_prov_buffer(config=rule_config, session=sess, success=False)
                     if rule_config.strict:
                         # Already a provenance error with a precise message
                         # (e.g. an unresolved output); don't bury it in a wrapper.
@@ -647,6 +753,9 @@ def rule(
                     logging.warning(
                         "Failed to write provenance for %s: %s", logical_name, prov_exc
                     )
+                finally:
+                    if activity_id is not None:
+                        sess.active_activities.pop()
 
         rule_obj = Rule(
             name=logical_name,
@@ -725,7 +834,7 @@ def build(
     _seen.add(target_str)
 
     buffer_started = False
-    if top_level and ProvenanceConfig.get().merge and _current_prov_buffer(sess) is None:
+    if top_level and (ProvenanceConfig.get().merge or ProvenanceConfig.get().stream) and _current_prov_buffer(sess) is None:
         start_prov_buffer(session=sess)
         buffer_started = True
 
@@ -746,6 +855,7 @@ def build(
         rule_obj.func(**params)
     finally:
         if top_level and buffer_started:
+            kwargs.setdefault("success", sys.exc_info()[0] is None)
             flush_prov_buffer(session=sess, **kwargs)
 
 

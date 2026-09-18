@@ -47,6 +47,7 @@ class span(ContextDecorator):
             context=self.context,
             label=self.label,
             session=self.session,
+            success=exc_type is None,
         )
         # Propagate exceptions
         return False

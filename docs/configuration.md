@@ -14,6 +14,7 @@ configurations.
 | `prov_path` | Explicit path to the provenance document; overrides `prov_dir`. |
 | `force` | When true, run rules regardless of timestamp checks. |
 | `merge` | When true, collect provenance in a workflow-level buffer and emit a single document at the end of the run. |
+| `stream` | Append each finished activity to a recovery `.jsonl`; if `merge=true`, atomically write the final merged document and remove the `.jsonl` on success. |
 | `dry_run` | Log actions without running rule bodies. |
 | `out_fmt` | Output format: `"json"` for JSON-LD or `"trig"` for RDF TriG. |
 | `context` | Embed JSON-LD context in output documents. |
@@ -46,8 +47,23 @@ buffer for the workflow run and appends provenance from every rule to that
 buffer. The buffer is flushed once at the end of the run (by the CLI entrypoint
 or the top-level call to {func}`makeprov.core.build`), ensuring that nested
 rules never emit their own documents. Any per-rule ``prov_path`` is ignored
-while a workflow buffer is active; set ``merge=false`` to force a rule to write
-its own provenance file immediately.
+while a workflow buffer is active; set ``merge=false, stream=false`` to force a
+rule to write its own provenance file immediately.
+
+## Recovery streaming
+
+Set `ProvenanceConfig(stream=True)` to write one independently contextualized
+JSON-LD document per JSONL line. An initial parent activity record preserves
+its ID and start time after interruption. Child records link back to that ID;
+the parent completion record is appended last. On successful completion with
+`merge=True` (the default), makeprov atomically replaces the merged `.json` or
+`.trig` output and deletes the `.jsonl`. If execution or final writing fails,
+the `.jsonl` remains. Set `merge=False` to retain JSONL as the only output.
+
+JSONL is makeprov's recovery format, not a single standards-compliant JSON-LD
+document. An existing `.jsonl` is never overwritten: move it before rerunning.
+Streaming records are flushed on close, without an `fsync` durability guarantee.
+Recovery of provenance does not automatically resume the computation.
 
 ## Context isolation
 

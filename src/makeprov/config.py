@@ -66,6 +66,7 @@ class ProvenanceConfig(Config):
     prov_path: str | None = None
     force: bool = False
     merge: bool = True
+    stream: bool = False
     dry_run: bool = False
     out_fmt: ProvFormat = "json"
     frame: Frame = "provenance"
@@ -216,8 +217,8 @@ def main(
             print(to_dot(early_ns.to_dot, session=sess))
             return
 
-        if conf_obj.merge and not sess.prov_buffers:
-            start_prov_buffer(session=sess)
+        if (conf_obj.merge or conf_obj.stream) and not sess.prov_buffers:
+            start_prov_buffer(session=sess, config=conf_obj)
             buffer_started = True
         defopt.run(
             subcommands,
@@ -226,5 +227,5 @@ def main(
             **kwargs
         )
     finally:
-        if conf_obj.merge and buffer_started:
-            flush_prov_buffer(session=sess)
+        if buffer_started:
+            flush_prov_buffer(session=sess, success=sys.exc_info()[0] is None)
