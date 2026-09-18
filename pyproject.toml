@@ -44,6 +44,7 @@ docs = [
 
 [project.scripts]
 makeprov-snakemake = "makeprov.snakemake:main"
+makeprov-reprozip = "makeprov.reprozip:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
