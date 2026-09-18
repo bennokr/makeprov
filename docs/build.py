@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import subprocess
 from pathlib import Path
 import shutil
 
@@ -9,6 +11,39 @@ except ModuleNotFoundError:  # 3.10
     import tomli as tomllib
 
 from sphinx.cmd.build import main as sphinx_main
+
+_TAG_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
+
+
+def _tagged_context_versions(repo_root: Path) -> dict[str, str]:
+    """Map released version -> JSON-LD context content at that tag.
+
+    Sourced straight from git tags rather than duplicate files checked into
+    ``docs/``, so a versioned context (see ``w3id.htaccess``) never drifts
+    from what was actually published at that version and never needs manual
+    upkeep. A tag missing ``src/makeprov/context.jsonld`` (pre-dating the
+    file's current location) is skipped rather than failing the build.
+    """
+    try:
+        tags = subprocess.run(
+            ["git", "tag", "--list"], cwd=repo_root, check=True,
+            capture_output=True, text=True,
+        ).stdout.splitlines()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return {}
+
+    versions = {}
+    for tag in tags:
+        match = _TAG_RE.match(tag.strip())
+        if not match:
+            continue
+        show = subprocess.run(
+            ["git", "show", f"{tag}:src/makeprov/context.jsonld"],
+            cwd=repo_root, capture_output=True, text=True,
+        )
+        if show.returncode == 0:
+            versions[match.group(1)] = show.stdout
+    return versions
 
 
 def main() -> None:
@@ -34,11 +69,17 @@ def main() -> None:
         shutil.rmtree(autosummary_dir)
     autosummary_dir.mkdir(parents=True, exist_ok=True)
 
-    # Publish JSON-LD context into build output (latest and versioned)
+    # Publish JSON-LD context into build output: "latest" plus one file per
+    # released version, so the w3id.htaccess versioned redirects
+    # (/context/X.Y.Z -> context-X.Y.Z.jsonld) keep resolving across
+    # rebuilds instead of only ever serving the most recently built version.
     context_src = repo_root / "src" / "makeprov" / "context.jsonld"
     if context_src.exists():
         shutil.copyfile(context_src, docs_build / "context.jsonld")
         shutil.copyfile(context_src, docs_build / f"context-{release}.jsonld")
+
+    for version, content in _tagged_context_versions(repo_root).items():
+        (docs_build / f"context-{version}.jsonld").write_text(content, encoding="utf-8")
 
     args = [
         "-b",

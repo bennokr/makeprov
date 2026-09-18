@@ -22,6 +22,11 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          # Full history + tags: docs/build.py reads each release tag's
+          # src/makeprov/context.jsonld to keep old versioned contexts
+          # (see w3id.htaccess) resolving across rebuilds.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5

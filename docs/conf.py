@@ -47,6 +47,9 @@ myst_enable_extensions = [
     "linkify",
     "colon_fence",
 ]
+# Auto-generate #slug anchors for headings up to this depth, so cross-doc
+# links like `usage.md#environment-declared-vs-resolved` resolve.
+myst_heading_anchors = 3
 
 # Automatically generate autosummary stub files
 autosummary_generate = True
