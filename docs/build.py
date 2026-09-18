@@ -12,7 +12,10 @@ except ModuleNotFoundError:  # 3.10
 
 from sphinx.cmd.build import main as sphinx_main
 
-_TAG_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
+# Matches whatever w3id.htaccess's own versioned-redirect rule matches
+# (`context/([0-9]+(?:\.[0-9]+)*)`), so "v0.8" and "v0.8.1" are both valid
+# release tags, not just three-part versions.
+_TAG_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
 
 
 def _tagged_context_versions(repo_root: Path) -> dict[str, str]:
