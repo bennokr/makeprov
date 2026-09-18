@@ -267,10 +267,6 @@ both.
 
 ## Documentation
 
-The full guide, including all the topics linked above, is published at
-**https://bennokr.github.io/makeprov/usage.html**
-(configuration reference: https://bennokr.github.io/makeprov/configuration.html).
-
 Build the Sphinx docs locally (including autosummary API stubs) with the docs
 extra so that the CLI dependencies needed for imports are available:
 

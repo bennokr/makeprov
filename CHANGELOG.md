@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8
 
 - Added `ProvenanceConfig(record_environment=True)` (CLI: `--record-environment`)
   to record retrospective environment evidence alongside the existing
@@ -11,9 +11,6 @@
 - The runtime agent now records `operatingSystem` (from `/etc/os-release`
   where available), a more informative environment descriptor than a raw
   kernel `uname` string.
-
-## 0.7.2
-
 - `ProvMeta[T]` annotates a rule argument to record its bound value as a
   `schema:additionalProperty` entry on the activity.
 - `ProvenanceConfig(stream=True)` appends each finished activity to a
