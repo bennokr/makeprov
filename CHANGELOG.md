@@ -2,6 +2,10 @@
 
 ## 0.8
 
+- Added `makeprov.reprozip`/`makeprov-reprozip`: convert an existing
+  `reprounzip graph --json` file into PROV/JSON-LD or RDF/TriG. Reads
+  observed file accesses and process relationships only; it does not run
+  ReproZip or capture network activity. See `docs/reprozip.md`.
 - Added `ProvenanceConfig(record_environment=True)` (CLI: `--record-environment`)
   to record retrospective environment evidence alongside the existing
   declared-dependency specs: the distributions a run actually imported,

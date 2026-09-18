@@ -5,8 +5,8 @@ around Python functions that read and write files: which inputs produced
 which outputs, when, with what code and environment. A decorator wraps a
 function, tracks the files it declares as inputs/outputs, and writes a
 provenance record after each call. A minimal `make`-style dependency
-resolver and an optional Snakemake bridge are included, but the core
-contract of the library is the provenance record — not workflow
+resolver and optional bridges from Snakemake and ReproZip are included, but
+the core contract of the library is the provenance record — not workflow
 orchestration, which tools like Snakemake already do well.
 
 ## Features
@@ -26,6 +26,8 @@ orchestration, which tools like Snakemake already do well.
   (`pip install "makeprov[rdf]"`).
 - Optional Snakemake bridge that turns `--d3dag` and `--detailed-summary`
   output into PROV JSON-LD artifacts ready for inclusion in Snakemake HTML reports.
+- Converts an existing ReproZip trace (`reprounzip graph --json`) into the
+  same PROV model via `makeprov-reprozip`.
 
 ## Installation
 
@@ -225,6 +227,17 @@ for the CLI flags and an example `report()` wiring.
 
 ```bash
 makeprov-snakemake --prov-path prov/snakemake -- --snakefile Snakefile --nolock
+```
+
+### ReproZip traces
+
+`makeprov-reprozip` converts an existing `reprounzip graph --json` file into
+PROV/JSON-LD or TriG — observed file accesses and process relationships only,
+with no ReproZip runtime dependency. See the
+[ReproZip conversion guide](https://bennokr.github.io/makeprov/reprozip.html).
+
+```bash
+makeprov-reprozip graph.json --output prov/command --base-iri https://example.org/my-experiment/
 ```
 
 ### Configuration

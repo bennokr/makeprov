@@ -11,6 +11,7 @@ usage
 configuration
 provenance
 snakemake
+reprozip
 api
 changelog
 ```
