@@ -27,6 +27,70 @@ orchestration, which tools like Snakemake already do well.
 - Optional Snakemake bridge that turns `--d3dag` and `--detailed-summary`
   output into PROV JSON-LD artifacts ready for inclusion in Snakemake HTML reports.
 
+## Installation
+
+You can install the module directly from PyPI:
+
+```bash
+pip install makeprov
+```
+
+Optional extras add RDF/TriG export, CLI subcommand support, or the Snakemake bridge:
+
+```bash
+pip install "makeprov[rdf]"        # rdflib + pyshacl for RDF/TriG export
+pip install "makeprov[cli]"        # defopt, needed for makeprov.main()
+pip install "makeprov[snakemake]"  # the makeprov-snakemake bridge
+```
+
+## Usage
+
+Here's an example of how to use this package in your Python scripts:
+
+```python
+from makeprov import rule, InPath, OutPath, build
+
+@rule()
+def process_data(
+    sample: int | None = None,
+    input_file: InPath = InPath('data/{sample:d}.txt'),
+    output_file: OutPath = OutPath('results/{sample:d}.txt')
+):
+    with input_file.open('r') as infile, output_file.open('w') as outfile:
+        data = infile.read()
+        outfile.write(data.upper())
+
+if __name__ == '__main__':
+    # Build a specific templated target and its prerequisites
+    from makeprov import build
+    build('results/1.txt')
+
+    # Or expose rules via a command line interface
+    import defopt
+    defopt.run(process_data)
+```
+
+You can execute `examples/example.py` via the CLI like so:
+
+```bash
+python examples/example.py build-all
+
+# Or set configuration through the CLI
+python examples/example.py build-all --conf='{"base_iri": "http://mybaseiri.org/", "prov_dir": "my_prov_directory"}' --force --input_file input.txt --output_file final_output.txt
+
+# Or set configuration through a TOML file
+python examples/example.py build-all -c @my_config.toml
+
+# Inspect dependency resolution without executing rules
+python examples/example.py --explain results/1.txt
+python examples/example.py --to-dot results/1.txt
+```
+
+For directory outputs, nested/merged provenance, streaming, opt-in rule
+metadata, Snakemake integration, and other advanced topics, see the full
+[usage guide](https://bennokr.github.io/makeprov/usage.html) and
+[configuration reference](https://bennokr.github.io/makeprov/configuration.html).
+
 ## The provenance model
 
 makeprov keeps PROV's distinction between the *plan* (the recipe) and the
@@ -137,164 +201,31 @@ The external object keeps its own detailed metadata; makeprov only records that
 this run used its stable IRI. External refs take no part in staleness checks,
 since they have no local mtime to compare.
 
-## Installation
+## More examples
 
-You can install the module directly from PyPI:
+- [`examples/complex_example.py`](examples/complex_example.py) — a CSV-to-RDF
+  workflow that aggregates multiple inputs and embeds an `rdflib.Graph` result
+  directly into the provenance dataset.
+- [`examples/merge_outdir_example.py`](examples/merge_outdir_example.py) —
+  bundling nested provenance and directory outputs with `merge=True` and
+  `OutDir`/`InDir`.
+- [`examples/context_demo_example.py`](examples/context_demo_example.py) —
+  pinning a base IRI and isolating rules and buffers in their own `Session`.
 
-```bash
-pip install makeprov
-```
-
-Optional extras add RDF/TriG export, CLI subcommand support, or the Snakemake bridge:
-
-```bash
-pip install "makeprov[rdf]"        # rdflib + pyshacl for RDF/TriG export
-pip install "makeprov[cli]"        # defopt, needed for makeprov.main()
-pip install "makeprov[snakemake]"  # the makeprov-snakemake bridge
-```
-
-## Usage
-
-Here’s an example of how to use this package in your Python scripts:
-
-```python
-from makeprov import rule, InPath, OutPath, build
-
-@rule()
-def process_data(
-    sample: int | None = None,
-    input_file: InPath = InPath('data/{sample:d}.txt'),
-    output_file: OutPath = OutPath('results/{sample:d}.txt')
-):
-    with input_file.open('r') as infile, output_file.open('w') as outfile:
-        data = infile.read()
-        outfile.write(data.upper())
-
-if __name__ == '__main__':
-    # Build a specific templated target and its prerequisites
-    from makeprov import build
-    build('results/1.txt')
-
-    # Or expose rules via a command line interface
-    import defopt
-    defopt.run(process_data)
-```
-
-You can execute `examples/example.py` via the CLI like so:
-
-```bash
-python examples/example.py build-all
-
-# Or set configuration through the CLI
-python examples/example.py build-all --conf='{"base_iri": "http://mybaseiri.org/", "prov_dir": "my_prov_directory"}' --force --input_file input.txt --output_file final_output.txt
-
-# Or set configuration through a TOML file
-python examples/example.py build-all -c @my_config.toml
-
-# Inspect dependency resolution without executing rules
-python examples/example.py --explain results/1.txt
-python examples/example.py --to-dot results/1.txt
-```
-
-### Complex CSV-to-RDF Workflow
-
-For a more involved scenario, see [`examples/complex_example.py`](examples/complex_example.py). It creates multiple CSV files, aggregates their contents, and emits an RDF graph that is both serialized to disk and embedded into the provenance dataset because the function returns an `rdflib.Graph`.
-
-```python
-@rule()
-def export_totals_graph(
-    totals_csv: InPath = InPath("data/region_totals.csv"),
-    graph_ttl: OutPath = OutPath("data/region_totals.ttl"),
-) -> Graph:
-    graph = Graph()
-    graph.bind("sales", SALES)
-
-    with totals_csv.open("r", newline="") as handle:
-        for row in csv.DictReader(handle):
-            region_key = row["region"].lower().replace(" ", "-")
-            subject = SALES[f"region/{region_key}"]
-
-            graph.add((subject, RDF.type, SALES.RegionTotal))
-            graph.add((subject, SALES.regionName, Literal(row["region"])))
-            graph.add((subject, SALES.totalUnits, Literal(row["total_units"], datatype=XSD.integer)))
-            graph.add((subject, SALES.totalRevenue, Literal(row["total_revenue"], datatype=XSD.decimal)))
-
-    with graph_ttl.open("w") as handle:
-        handle.write(graph.serialize(format="turtle"))
-
-    return graph
-```
-
-Run the entire workflow, including CSV generation and RDF export, with:
-
-```bash
-python examples/complex_example.py build-sales-report
-```
-
-### Bundling nested provenance and directory outputs
-
-Rules can merge the provenance from any rules they invoke by passing
-``merge=True`` to `makeprov.rule`. Pair this with
-`makeprov.OutDir` to declare a directory and then materialize multiple
-outputs beneath it while keeping them linked to a single provenance record. Use
-`makeprov.InDir` for the same tracked-directory semantics on inputs. For nested
-structures, call `subdir()` on an `OutDir`/`InDir` to auto-wrap subfolders
-without manually constructing new instances.
-See [`examples/merge_outdir_example.py`](examples/merge_outdir_example.py) for an example.
-
-Merging is enabled by default: top-level runs start a provenance buffer and
-flush it once the CLI finishes, so downstream rules end up in one document
-unless you explicitly turn buffering off with `merge=False` on a rule or in the
-global config. Nested merges append to their parent buffer rather than writing
-multiple files.
-
-### Configured context and isolated sessions
-
-`examples/context_demo_example.py` demonstrates pinning a base IRI, writing
-provenance to a dedicated directory, and running rules inside an isolated
-session so registries and buffers do not leak across runs:
-
-```bash
-python examples/context_demo_example.py build-all
-```
+Walkthroughs of these, plus streaming/recovery mode and opt-in rule metadata,
+are in the [usage guide](https://bennokr.github.io/makeprov/usage.html).
 
 ### Snakemake workflows
 
 Install the `snakemake` extra (`pip install "makeprov[snakemake]"`) to get the
-`makeprov-snakemake` command, which shells out to Snakemake and converts the
-job DAG together with ``--detailed-summary`` metadata into a PROV document.
-It mirrors the familiar configuration flags from `makeprov.config` and writes
-JSON-LD by default. Note this is a best-effort bridge: it parses Snakemake's
-human-oriented text output, so treat it as a convenience for reports rather
-than an authoritative source of truth — it will raise rather than guess when
-it can't unambiguously parse a filename (e.g. one containing whitespace).
+`makeprov-snakemake` command, which shells out to Snakemake and converts its
+job DAG and `--detailed-summary` metadata into a PROV document. See the
+[Snakemake integration guide](https://bennokr.github.io/makeprov/snakemake.html)
+for the CLI flags and an example `report()` wiring.
 
 ```bash
 makeprov-snakemake --prov-path prov/snakemake -- --snakefile Snakefile --nolock
 ```
-
-Wire the resulting file into a report by marking it with Snakemake’s
-`report()` helper:
-
-```python
-rule provenance:
-    input:
-        "results/word_count.txt"
-    output:
-        "prov/snakemake.json"
-    shell:
-        (
-            "makeprov-snakemake "
-            "--prov-path prov/snakemake "
-            "--out-fmt json --context --frame provenance "
-            "-- "
-            "--snakefile {workflow.snakefile} --nolock {input}"
-        )
-```
-
-Using the optional `--forceall-dag` flag ensures that the job-level dependency
-edges in the provenance graph remain complete even when Snakemake skips nodes
-that are already up to date.
 
 ### Configuration
 
@@ -322,86 +253,26 @@ You can customize the provenance tracking with the following options:
  - `forge_profiles` (str | None): TOML file of extra forge profiles, for
    self-hosted git hosts. CLI: `--forge-profiles`.
 
-### Upgrading to 0.7
-
-0.7 changes the provenance model. The decorator API is unchanged — existing
-`@rule` functions using `InPath`/`OutPath` keep working — but the emitted
-graph differs:
-
-- The script is no longer a `prov:SoftwareAgent`. It is a `prov:Plan`, reached
-  from the activity via `prov:qualifiedAssociation`/`prov:hadPlan`. Consumers
-  that looked for `prov:wasAssociatedWith` to find the script should follow
-  `prov:hadPlan` instead.
-- Outputs now carry a `sha256` content digest. Previously the digest was
-  computed and then discarded for outputs.
-- Entity IRIs derived from a GitHub remote are pinned to the **commit** rather
-  than the branch, so an IRI no longer denotes different bytes after each push.
-- Run identifiers include seconds and a random suffix. Minute-resolution ids
-  meant two runs of the same rule in one minute shared an activity IRI.
-- A declared output that is missing after a successful run now raises
-  `UnresolvedArtifactError` instead of being dropped from the graph. Missing
-  *inputs* are recorded without content metadata and logged, rather than
-  disappearing.
-- `Prov.create()` takes `list[ArtifactRef]` instead of `list[Path]`.
-- The Snakemake bridge follows the same model: each rule is now a `prov:Plan`
-  at `<base>rule/<name>`, and each job activity carries a
-  `prov:qualifiedAssociation`. Its agent node gained `schema:SoftwareApplication`.
-- The bridge no longer defaults to a `urn:snakemake:` namespace. That NID was
-  never IANA-registered, so it named no real namespace and collided across
-  unrelated workflows sharing rule names. It now shares the decorator API's
-  identifier policy (`makeprov.prov.resolve_iris`): an explicit `base_iri`,
-  else a commit-pinned base derived from a GitHub remote, else relative IRIs.
-- `blob:` identifiers are only minted for files inside the repository. An
-  absolute path within the checkout is rewritten to its repo-relative form, and
-  a path outside it gets a `file:` URI instead of a `blob:` IRI that would
-  expand to a nonexistent location.
-- Entities carry `schema:sha256` (bare hex) alongside the algorithm-qualified
-  `dct:identifier`, so consumers no longer have to parse a prefix.
-- Activities state `prov:generated` as well as each entity's inverse
-  `prov:wasGeneratedBy`, mirroring `prov:used` and mapping onto RO-Crate's
-  `result`.
-- A dirty working tree is recorded as `<sha>-dirty` (the `git describe --dirty`
-  convention) with a warning, instead of asserting a clean revision that does
-  not describe what ran.
-- `prov:wasDerivedFrom` and `rdfs:seeAlso` on cached downloads are emitted as
-  node references rather than string literals, so the links are traversable.
-  `CachedDownload(..., sha256=...)` pins and verifies the cached copy.
-- The base heuristic covers all hosts in `forges.toml`, not just GitHub, and
-  understands SSH remotes. Credentials embedded in a remote URL are stripped —
-  previously a remote like `https://user:token@github.com/o/r.git` would have
-  put the token into `@base` in every document.
+See [`CHANGELOG.md`](CHANGELOG.md) for what changed in past releases, including
+the 0.7 provenance-model rework.
 
 ### Scoped spans and cached downloads
 
 Use `makeprov.span(label, prov_path=None, frame=None, context=None)` as a
 context manager or decorator to bracket a chunk of work in its own provenance
-buffer. A span returns the merged `Prov` via `span.prov`, so nested spans can
-emit labeled artifacts without manual slicing/merging:
-
-```python
-from makeprov import span
-
-with span("model-run", prov_path="prov/models/model1"):
-    run_model()
-```
-
-For remote resources that are cached locally, wrap the path with
-`CachedDownload`. It will lazily fetch on first access and record the source
-URL (and optional headers) in the provenance:
-
-```python
-from makeprov import CachedDownload, rule
-
-@rule()
-def fetch_data(meta_json=CachedDownload("https://example.org/meta.json", "cache/meta.json")):
-    with meta_json.open() as handle:
-        return handle.read()
-```
+buffer, and `makeprov.CachedDownload` to lazily fetch and record provenance for
+a remote resource cached locally. See the
+[usage guide](https://bennokr.github.io/makeprov/usage.html) for examples of
+both.
 
 ## Documentation
 
-Build the Sphinx docs (including autosummary API stubs) with the docs extra so
-that the CLI dependencies needed for imports are available:
+The full guide, including all the topics linked above, is published at
+**https://bennokr.github.io/makeprov/usage.html**
+(configuration reference: https://bennokr.github.io/makeprov/configuration.html).
+
+Build the Sphinx docs locally (including autosummary API stubs) with the docs
+extra so that the CLI dependencies needed for imports are available:
 
 ```bash
 pip install -e ".[docs]"

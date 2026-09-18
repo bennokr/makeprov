@@ -214,6 +214,74 @@ with span("model-a", prov_path="prov/models/a") as sp:
     assert sp.prov.name == "model-a"
 ```
 
+## Caching remote downloads
+
+Wrap a URL with {class}`~makeprov.paths.CachedDownload` to fetch it lazily on
+first access and record the source URL (and optional headers) in the
+provenance. Pass `sha256=` to pin and verify the cached copy:
+
+```python
+from makeprov import CachedDownload, rule
+
+@rule()
+def fetch_data(meta_json=CachedDownload("https://example.org/meta.json", "cache/meta.json")):
+    with meta_json.open() as handle:
+        return handle.read()
+```
+
+## Multi-file RDF export example
+
+For a more involved scenario — writing multiple CSV files, aggregating their
+contents, and embedding an `rdflib.Graph` result directly into the provenance
+dataset — see [`examples/complex_example.py`](https://github.com/bennokr/makeprov/blob/main/examples/complex_example.py).
+The rule below both serializes the graph to disk and returns it, so it is also
+embedded as a result entity:
+
+```python
+@rule()
+def export_totals_graph(
+    totals_csv: InPath = InPath("data/region_totals.csv"),
+    graph_ttl: OutPath = OutPath("data/region_totals.ttl"),
+) -> Graph:
+    graph = Graph()
+    graph.bind("sales", SALES)
+
+    with totals_csv.open("r", newline="") as handle:
+        for row in csv.DictReader(handle):
+            region_key = row["region"].lower().replace(" ", "-")
+            subject = SALES[f"region/{region_key}"]
+
+            graph.add((subject, RDF.type, SALES.RegionTotal))
+            graph.add((subject, SALES.regionName, Literal(row["region"])))
+            graph.add((subject, SALES.totalUnits, Literal(row["total_units"], datatype=XSD.integer)))
+            graph.add((subject, SALES.totalRevenue, Literal(row["total_revenue"], datatype=XSD.decimal)))
+
+    with graph_ttl.open("w") as handle:
+        handle.write(graph.serialize(format="turtle"))
+
+    return graph
+```
+
+Run the entire workflow, including CSV generation and RDF export, with:
+
+```bash
+python examples/complex_example.py build-sales-report
+```
+
+## Pinning context and isolating sessions
+
+[`examples/context_demo_example.py`](https://github.com/bennokr/makeprov/blob/main/examples/context_demo_example.py)
+demonstrates pinning a base IRI, writing provenance to a dedicated directory,
+and running rules inside an isolated {class}`~makeprov.core.Session` so
+registries and buffers do not leak across runs:
+
+```bash
+python examples/context_demo_example.py build-all
+```
+
+See [Isolating state with sessions](configuration.md#isolating-state-with-sessions)
+for the session API this example relies on.
+
 ## Controlling provenance framing
 
 ``Prov`` objects can be serialized directly via :meth:`~makeprov.prov.Prov.to_jsonld`

@@ -12,4 +12,5 @@ configuration
 provenance
 snakemake
 api
+changelog
 ```

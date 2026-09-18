@@ -21,7 +21,7 @@ from .config import ProvenanceConfig, ProvFormat, Frame
 from .paths import CachedDownload, InDir, InPath, OutDir, OutPath
 from .prov import (
     COMMON_CONTEXT, PlanGraph, Prov, ProvenanceWriteError,
-    _caller_script, resolve_iris,
+    _caller_script, _safe_cmd, resolve_iris,
 )
 from .meta import ProvMeta
 from .rdfmixin import RDFMixin
@@ -417,6 +417,9 @@ def rule(
             to the configured merge behavior.
         stream (bool | None): Append JSON-LD records to a recovery JSONL file;
             merge and remove it on successful completion when ``merge=True``.
+            Like ``merge``, this propagates: once a rule starts streaming for
+            the active buffer, every nested rule call streams into it too,
+            regardless of that nested rule's own ``stream`` setting.
         strict (bool | None): When ``True`` (the default), a failure to write
             provenance raises :class:`~makeprov.prov.ProvenanceWriteError`
             instead of only logging a warning. Overrides the configured
@@ -639,9 +642,16 @@ def rule(
             stream_state = sess.prov_stream
             parent_id = sess.active_activities[-1] if sess.active_activities else None
             activity_id = None
+            git_origin = git_revision = None
             if stream_state is not None:
+                # Resolve once and hand the same origin/revision to Prov.create
+                # below, so it mints identifiers from a minter with the same
+                # policy instead of re-running these git lookups.
+                git_origin = _safe_cmd(["git", "config", "--get", "remote.origin.url"])
+                git_revision = _safe_cmd(["git", "rev-parse", "HEAD"])
                 iri_context = deepcopy(COMMON_CONTEXT)
                 minter = resolve_iris(rule_config.base_iri, iri_context,
+                                      origin=git_origin, revision=git_revision,
                                       forge_profiles=rule_config.forge_profiles)
                 activity_id = minter.file(
                     f"{quote(_caller_script().name, safe='')}#{logical_name}-{run_id}"
@@ -703,6 +713,8 @@ def rule(
                                   if key in bound.arguments},
                         activity_id=activity_id,
                         parent_id=parent_id,
+                        origin=git_origin,
+                        revision=git_revision,
                         record_user=rule_config.record_user,
                         forge_profiles=rule_config.forge_profiles,
                         plan_graph=(
@@ -834,8 +846,9 @@ def build(
     _seen.add(target_str)
 
     buffer_started = False
-    if top_level and (ProvenanceConfig.get().merge or ProvenanceConfig.get().stream) and _current_prov_buffer(sess) is None:
-        start_prov_buffer(session=sess)
+    top_config = ProvenanceConfig.get()
+    if top_level and (top_config.merge or top_config.stream) and _current_prov_buffer(sess) is None:
+        start_prov_buffer(session=sess, config=top_config)
         buffer_started = True
 
     try:

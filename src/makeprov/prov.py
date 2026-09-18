@@ -446,6 +446,8 @@ class Prov:
         record_user: bool = False,
         forge_profiles: str | None = None,
         plan_graph: PlanGraph | None = None,
+        origin: str | None = None,
+        revision: str | None = None,
     ):
         """Assemble a provenance graph from rule execution details.
 
@@ -464,6 +466,11 @@ class Prov:
             record_user (bool): Record the invoking user from ``git config`` as
                 a ``schema:Person`` agent. Off by default, since provenance
                 documents are routinely committed and published.
+            origin (str | None): Reuse an already-looked-up
+                ``git config --get remote.origin.url`` instead of running it
+                again, e.g. when a caller minted ``activity_id`` beforehand.
+            revision (str | None): Reuse an already-looked-up
+                ``git rev-parse HEAD`` instead of running it again.
 
         Returns:
             Prov: A populated :class:`Prov` instance ready for serialization.
@@ -483,8 +490,8 @@ class Prov:
                 )
         """
         script = _caller_script()
-        commit = _safe_cmd(["git", "rev-parse", "HEAD"])
-        origin = _safe_cmd(["git", "config", "--get", "remote.origin.url"])
+        commit = revision or _safe_cmd(["git", "rev-parse", "HEAD"])
+        origin = origin or _safe_cmd(["git", "config", "--get", "remote.origin.url"])
 
         context = deepcopy(COMMON_CONTEXT)
         minter = resolve_iris(
