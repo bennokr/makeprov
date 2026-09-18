@@ -67,6 +67,24 @@ def test_record_environment_cites_lockfile_when_found(monkeypatch, tmp_path):
     assert lock_entities[0].sha256 is not None
 
 
+def test_lockfile_cited_relative_to_cwd_when_possible(monkeypatch, tmp_path):
+    lockfile = tmp_path / "uv.lock"
+    lockfile.write_text("# fake lock\n")
+
+    monkeypatch.setattr(prov, "_installed_distributions", lambda: [])
+    monkeypatch.setattr(prov, "_imported_distributions", lambda installed: [])
+    monkeypatch.setattr(prov, "_find_lockfile", lambda *dirs: lockfile)
+    monkeypatch.chdir(tmp_path)
+
+    result = _build_prov(monkeypatch, record_environment=True)
+    env = _env_node(result)
+
+    # Cited the same way a declared InPath would be (relative to cwd), not
+    # as the absolute filesystem path _find_lockfile located it by.
+    assert env.wasDerivedFrom is not None
+    assert str(tmp_path) not in env.wasDerivedFrom
+
+
 def test_agent_records_operating_system(monkeypatch):
     result = _build_prov(monkeypatch, record_environment=False)
     agents = [n for n in result.provenance if isinstance(n, prov.AgentNode)]

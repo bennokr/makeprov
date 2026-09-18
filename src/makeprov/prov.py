@@ -794,7 +794,14 @@ class Prov:
                     Path.cwd(),
                 )
                 if lock_path is not None:
-                    lock_entity = _entity(ArtifactRef.local(lock_path, label="lockfile").resolve())
+                    # Cite it the same way a declared InPath would be: relative
+                    # to the working directory when possible, rather than the
+                    # absolute filesystem path _find_lockfile located it by.
+                    try:
+                        lock_ref_path = lock_path.relative_to(Path.cwd())
+                    except ValueError:
+                        lock_ref_path = lock_path
+                    lock_entity = _entity(ArtifactRef.local(lock_ref_path, label="lockfile").resolve())
 
                 env_signature["resolved"] = sorted(imported_specs)
                 env_signature["lockfile"] = lock_entity.identifier if lock_entity else None

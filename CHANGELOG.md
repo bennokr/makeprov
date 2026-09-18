@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8
+## 0.8.0
 
 - Added `makeprov.reprozip`/`makeprov-reprozip`: convert an existing
   `reprounzip graph --json` file into PROV/JSON-LD or RDF/TriG. Reads
