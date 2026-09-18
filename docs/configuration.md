@@ -15,6 +15,7 @@ configurations.
 | `force` | When true, run rules regardless of timestamp checks. |
 | `merge` | When true, collect provenance in a workflow-level buffer and emit a single document at the end of the run. |
 | `stream` | Append each finished activity to a recovery `.jsonl`; if `merge=true`, atomically write the final merged document and remove the `.jsonl` on success. |
+| `record_environment` | Record retrospective environment evidence: distributions this run actually imported (pinned to exact versions), plus a citation of any lockfile found. See [Environment evidence](usage.md#environment-declared-vs-resolved). |
 | `dry_run` | Log actions without running rule bodies. |
 | `out_fmt` | Output format: `"json"` for JSON-LD or `"trig"` for RDF TriG. |
 | `context` | Embed JSON-LD context in output documents. |

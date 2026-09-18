@@ -73,6 +73,7 @@ class AgentNode(BaseNode):
     label: str | None = None
     hasVersion: str | None = None
     source: str | None = None
+    operatingSystem: str | None = None
 
 
 @dataclass(unsafe_hash=True)
@@ -129,7 +130,16 @@ class EnvNode(BaseNode):
     label: str = "Python environment"
     title: str | None = None
     hasVersion: str | None = None
+    # Prospective: declared requirement specs (version ranges) from the
+    # top-level package's own metadata.
     requires: tuple[DepNode] | None = None
+    # Retrospective: the distributions this run actually imported, pinned to
+    # the exact version resolved into the environment. Populated only when
+    # ProvenanceConfig(record_environment=True).
+    resolved: tuple[DepNode] | None = None
+    # The lockfile this environment was resolved from, when one was found
+    # (uv.lock, poetry.lock, Pipfile.lock, pdm.lock, pylock.toml).
+    wasDerivedFrom: str | None = None
 
 
 @dataclass(unsafe_hash=True)
@@ -244,6 +254,85 @@ def project_metadata(dist_name: str | None = None):
     name = dist.metadata.get("Name")
     version = dist.version
     return name, version, mandatory
+
+
+def _platform_summary() -> str | None:
+    """A short, human-legible OS description, richer than ``platform.uname()``.
+
+    Prefers ``/etc/os-release`` (``PRETTY_NAME``), which is what container base
+    images and Linux distros already populate, over the raw kernel string.
+    """
+    try:
+        os_release = platform.freedesktop_os_release()
+        os_name = os_release.get("PRETTY_NAME") or os_release.get("NAME")
+    except OSError:
+        os_name = platform.platform(terse=True)
+    except Exception:  # noqa: BLE001
+        os_name = None
+    if not os_name:
+        return None
+    arch = platform.machine()
+    return f"{os_name} ({arch})" if arch else os_name
+
+
+def _installed_distributions() -> list[str]:
+    """Every installed distribution as ``"name==version"``, like ``pip freeze``.
+
+    Sourced from :mod:`importlib.metadata` rather than shelling out to ``pip``,
+    so it works even where ``pip`` itself isn't installed and needs no
+    subprocess.
+    """
+    import importlib.metadata as im
+
+    seen: dict[str, str] = {}
+    for dist in im.distributions():
+        name = dist.metadata.get("Name") if dist.metadata else None
+        version = dist.version
+        if name and version:
+            seen[pep503_normalize(name)] = f"{name}=={version}"
+    return sorted(seen.values())
+
+
+def _imported_distributions(installed: list[str]) -> list[str]:
+    """The subset of ``installed`` whose top-level modules were imported.
+
+    A full freeze says what is merely *available*; this says what this run
+    actually loaded, which is the stronger retrospective claim.
+    """
+    import importlib.metadata as im
+    import sys
+
+    try:
+        mapping = im.packages_distributions()
+    except Exception:  # noqa: BLE001
+        return installed
+
+    imported = set()
+    for mod_name in list(sys.modules):
+        top = mod_name.split(".", 1)[0]
+        for dist_name in mapping.get(top, ()):
+            imported.add(pep503_normalize(dist_name))
+
+    return [spec for spec in installed if pep503_normalize(spec.split("==")[0]) in imported]
+
+
+_LOCKFILE_NAMES = ("uv.lock", "poetry.lock", "Pipfile.lock", "pdm.lock", "pylock.toml")
+
+
+def _find_lockfile(*search_dirs: Path | None) -> Path | None:
+    """Look for a recognized lockfile in the given directories.
+
+    Only unambiguous, single-purpose lockfiles are considered — not
+    ``requirements.txt``, which is routinely present without pinning anything.
+    """
+    for base in dict.fromkeys(d for d in search_dirs if d is not None):
+        for candidate in _LOCKFILE_NAMES:
+            path = base / candidate
+            if path.is_file():
+                return path
+        for path in sorted(base.glob("pylock.*.toml")):
+            return path
+    return None
 
 
 def pep503_normalize(name: str) -> str:
@@ -444,6 +533,7 @@ class Prov:
         activity_id: str | None = None,
         parent_id: str | None = None,
         record_user: bool = False,
+        record_environment: bool = False,
         forge_profiles: str | None = None,
         plan_graph: PlanGraph | None = None,
         origin: str | None = None,
@@ -466,6 +556,13 @@ class Prov:
             record_user (bool): Record the invoking user from ``git config`` as
                 a ``schema:Person`` agent. Off by default, since provenance
                 documents are routinely committed and published.
+            record_environment (bool): Also record retrospective environment
+                evidence: the distributions this run actually imported (pinned
+                to exact versions, unlike the declared ``requires`` range
+                specs), and a citation of any lockfile found (``uv.lock``,
+                ``poetry.lock``, ``Pipfile.lock``, ``pdm.lock``,
+                ``pylock.toml``). Off by default: a full dependency snapshot
+                adds real document weight most rules don't need.
             origin (str | None): Reuse an already-looked-up
                 ``git config --get remote.origin.url`` instead of running it
                 again, e.g. when a caller minted ``activity_id`` beforehand.
@@ -566,6 +663,7 @@ class Prov:
             type=("prov:Agent", "prov:SoftwareAgent", "schema:SoftwareApplication"),
             label=f"{platform.python_implementation()} {py_version}",
             hasVersion=py_version,
+            operatingSystem=_platform_summary(),
         ))
 
         # Agent: the person who ran it, when git can tell us and the caller
@@ -656,8 +754,9 @@ class Prov:
 
         # Environment + deps
         env_node: EnvNode | None = None
+        lock_entity: FileEntity | None = None
         pname, version, deps_specs = project_metadata()
-        if any([pname, version, deps_specs]):
+        if any([pname, version, deps_specs]) or record_environment:
             reqs: list["DepNode"] = []
             normalized_specs: list[str] = []
             for spec in deps_specs:
@@ -676,6 +775,30 @@ class Prov:
                 "version": version or "",
                 "deps": sorted(normalized_specs),
             }
+
+            # Retrospective: what was actually imported, pinned to exact
+            # versions, plus a citation of any lockfile on disk.
+            resolved: list["DepNode"] = []
+            if record_environment:
+                imported_specs = _imported_distributions(_installed_distributions())
+                for spec_str in imported_specs:
+                    norm = pep503_normalize(spec_str.split("==")[0])
+                    dep_iri = f"https://pypi.org/project/{norm}/"
+                    resolved.append(
+                        DepNode(id=dep_iri, type="schema:SoftwareSourceCode", label=spec_str)
+                    )
+
+                repo_root = _safe_cmd(["git", "rev-parse", "--show-toplevel"])
+                lock_path = _find_lockfile(
+                    Path(repo_root) if repo_root else None,
+                    Path.cwd(),
+                )
+                if lock_path is not None:
+                    lock_entity = _entity(ArtifactRef.local(lock_path, label="lockfile").resolve())
+
+                env_signature["resolved"] = sorted(imported_specs)
+                env_signature["lockfile"] = lock_entity.identifier if lock_entity else None
+
             env_hash = hashlib.sha256(json.dumps(env_signature, sort_keys=True).encode()).hexdigest()[:12]
             env_id = _iri(f"env-{env_hash}")
             env_node = _apply_context(EnvNode(
@@ -685,6 +808,8 @@ class Prov:
                 title=pname or None,
                 hasVersion=version or None,
                 requires=tuple(reqs) or None,
+                resolved=tuple(resolved) or None,
+                wasDerivedFrom=lock_entity.id if lock_entity is not None else None,
             ))
             # Link activity -> env via prov:used
             if env_id:
@@ -735,6 +860,7 @@ class Prov:
                 *([person] if person is not None else []),
                 *output_nodes,
                 *([env_node] if env_node else []),
+                *([lock_entity] if lock_entity is not None else []),
             ],
             results=[(results_graph, results)] if results is not None else [],
             context=context,

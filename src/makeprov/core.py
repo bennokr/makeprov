@@ -540,6 +540,7 @@ def rule(
                 strict=strict if strict is not None else base_config.strict,
                 run_id=base_config.run_id,
                 record_user=base_config.record_user,
+                record_environment=base_config.record_environment,
                 forge_profiles=base_config.forge_profiles,
                 emit_plan_graph=base_config.emit_plan_graph,
             )
@@ -716,6 +717,7 @@ def rule(
                         origin=git_origin,
                         revision=git_revision,
                         record_user=rule_config.record_user,
+                        record_environment=rule_config.record_environment,
                         forge_profiles=rule_config.forge_profiles,
                         plan_graph=(
                             _plan_graph(logical_name, in_files, sess)

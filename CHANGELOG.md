@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+- Added `ProvenanceConfig(record_environment=True)` (CLI: `--record-environment`)
+  to record retrospective environment evidence alongside the existing
+  declared-dependency specs: the distributions a run actually imported,
+  pinned to exact installed versions, and a citation of any lockfile found
+  (`uv.lock`, `poetry.lock`, `Pipfile.lock`, `pdm.lock`, `pylock.toml`) hashed
+  and linked via `prov:wasDerivedFrom`. Off by default.
+- The runtime agent now records `operatingSystem` (from `/etc/os-release`
+  where available), a more informative environment descriptor than a raw
+  kernel `uname` string.
+
+## 0.7.2
+
+- `ProvMeta[T]` annotates a rule argument to record its bound value as a
+  `schema:additionalProperty` entry on the activity.
+- `ProvenanceConfig(stream=True)` appends each finished activity to a
+  recovery `.jsonl` file; with `merge=True` (the default) the final merged
+  document replaces it atomically on success, and the `.jsonl` is kept
+  otherwise so an interrupted run isn't silently lost.
+- Every activity now carries `schema:duration`, an ISO 8601 duration derived
+  from its existing timestamps.
+
 ## 0.7
 
 The decorator API is unchanged — existing `@rule` functions using

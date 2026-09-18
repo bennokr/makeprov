@@ -214,6 +214,36 @@ with span("model-a", prov_path="prov/models/a") as sp:
     assert sp.prov.name == "model-a"
 ```
 
+## Environment: declared vs. resolved
+
+Every activity records a `Python environment` entity built from your package's
+own declared dependencies — version-range specs like `numpy>=1.20`, read from
+installed metadata. That's *prospective*: it says what versions were allowed,
+not which ones actually ran.
+
+Set `ProvenanceConfig(record_environment=True)` (CLI: `--record-environment`)
+to also record the *retrospective* evidence:
+
+- `resolved` — the distributions this run actually imported, pinned to their
+  exact installed versions (`numpy==1.26.4`). This is narrower than a full
+  `pip freeze`: only distributions whose modules were actually imported during
+  the run are included, sourced from `importlib.metadata` with no `pip`
+  subprocess required.
+- A citation of any lockfile found (`uv.lock`, `poetry.lock`, `Pipfile.lock`,
+  `pdm.lock`, or `pylock.toml`) in the repository root or the working
+  directory, hashed and linked from the environment entity via
+  `prov:wasDerivedFrom` — the same way any other input file is tracked.
+
+It's off by default because a full dependency snapshot adds real weight to
+small documents; turn it on for runs where reproducing the exact environment
+matters.
+
+The runtime agent also records `operatingSystem`, e.g. `"Debian GNU/Linux 12
+(bookworm) (x86_64)"` — read from `/etc/os-release` where available (falling
+back to `platform.platform()` elsewhere), which is more informative than a
+raw kernel `uname` string and happens to double as a base-image hint inside
+most containers.
+
 ## Caching remote downloads
 
 Wrap a URL with {class}`~makeprov.paths.CachedDownload` to fetch it lazily on

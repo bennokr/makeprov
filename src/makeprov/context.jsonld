@@ -40,5 +40,8 @@
     "hasVersion": "dct:hasVersion",
     "source": {"@id": "dct:source", "@type": "@id"},
     "requires": {"@id": "dct:requires", "@type": "@id", "@container": "@set"},
+    "resolved": {"@id": "prov:hadMember", "@type": "@id", "@container": "@set"},
+    "wasDerivedFrom": {"@id": "prov:wasDerivedFrom", "@type": "@id"},
+    "operatingSystem": "schema:operatingSystem",
     "comment": "rdfs:comment"
 }

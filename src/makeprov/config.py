@@ -83,6 +83,11 @@ class ProvenanceConfig(Config):
     # and a name and email address are personal data the caller should opt into
     # publishing rather than emit by accident.
     record_user: bool = False
+    # Record retrospective environment evidence: distributions this run
+    # actually imported (pinned to exact versions), plus a citation of any
+    # lockfile found. Off by default: a full dependency snapshot adds real
+    # document weight most rules don't need.
+    record_environment: bool = False
     # Extra forge profiles (TOML), for self-hosted git hosts. See forges.toml.
     forge_profiles: str | None = None
     # Emit prospective structure: the rule dependency graph as prov:Plan nodes
@@ -172,6 +177,16 @@ def main(
         help="Record the git user as a schema:Person agent (off by default)",
     )
     parent.add_argument(
+        "--record-environment",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Also record retrospective environment evidence: actually-imported "
+            "distributions pinned to exact versions, plus any lockfile found "
+            "(off by default)"
+        ),
+    )
+    parent.add_argument(
         "--forge-profiles",
         default=None,
         help="TOML file of extra forge profiles for self-hosted git hosts",
@@ -190,6 +205,8 @@ def main(
             working_conf.emit_plan_graph = ns.plan_graph
         if ns.record_user is not None:
             working_conf.record_user = ns.record_user
+        if ns.record_environment is not None:
+            working_conf.record_environment = ns.record_environment
         if ns.forge_profiles is not None:
             working_conf.forge_profiles = ns.forge_profiles
         if conf_obj is ProvenanceConfig.get():
