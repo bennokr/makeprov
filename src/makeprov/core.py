@@ -253,14 +253,31 @@ def flush_prov_buffer(
     return merged
 
 
+def _content_files(directory: Path) -> list[Path]:
+    """Files below a directory, without hidden files or ``__pycache__``."""
+    return [
+        path for path in directory.rglob("*")
+        if path.is_file() and not any(
+            part.startswith(".") or part == "__pycache__"
+            for part in path.relative_to(directory).parts
+        )
+    ]
+
+
 def needs_update(outputs, deps) -> bool:
     """Determine whether outputs are stale relative to dependencies.
 
+    A dependency that is a directory counts through the files below it, so
+    editing a file inside an input directory makes the outputs stale. An output
+    directory counts through its own mtime, which a successful rule run sets to
+    its completion time; an empty output directory counts as missing. Hidden
+    files and ``__pycache__`` are ignored.
+
     Args:
-        outputs (Iterable[str | Path]): Output files expected to exist after a
-            rule runs.
-        deps (Iterable[str | Path]): Dependency files that must be newer than
-            outputs for a rebuild to be unnecessary.
+        outputs (Iterable[str | Path]): Output files or directories expected to
+            exist after a rule runs.
+        deps (Iterable[str | Path]): Dependency files or directories that must
+            be older than the outputs for a rebuild to be unnecessary.
 
     Returns:
         bool: ``True`` if any output is missing or older than a dependency; the
@@ -281,13 +298,23 @@ def needs_update(outputs, deps) -> bool:
         return True
     if any(not o.exists() for o in out_paths):
         return True
+    if any(o.is_dir() and not _content_files(o) for o in out_paths):
+        return True
 
     oldest_out = min(o.stat().st_mtime for o in out_paths)
-    dep_times = [d.stat().st_mtime for d in dep_paths if d.exists()]
+    dep_files = [f for d in dep_paths if d.exists() for f in (_content_files(d) if d.is_dir() else [d])]
+    dep_times = [f.stat().st_mtime for f in dep_files]
     if not dep_times:
         return False
     newest_dep = max(dep_times)
     return newest_dep > oldest_out
+
+
+def _stamp_output_dirs(paths: list[Path]) -> None:
+    """Set each output directory's mtime to now, marking when it was last built."""
+    for path in paths:
+        if path.is_dir():
+            os.utime(path)
 
 
 def _path_ref(path: Path) -> ArtifactRef:
@@ -675,6 +702,7 @@ def rule(
 
             try:
                 result = func(*bound.args, **bound.kwargs)
+                _stamp_output_dirs(out_files)
                 return result
             except BaseException as e:
                 exc = e

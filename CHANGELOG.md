@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.1
+
+- Fixed the up-to-date check for directories. An `InDir` used to count only
+  through the directory's own mtime, which changes when files are added or
+  removed but not when one is edited, so editing a file inside an input
+  directory never made a rule rerun. Input directories now count through the
+  files below them, ignoring hidden files and `__pycache__`.
+- A successful run now sets each `OutDir`'s mtime to its completion time, so an
+  output directory whose files were rewritten in place still counts as built
+  after its inputs. An empty output directory counts as missing.
+
 ## 0.8.0
 
 - Added `makeprov.reprozip`/`makeprov-reprozip`: convert an existing
