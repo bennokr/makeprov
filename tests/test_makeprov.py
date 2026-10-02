@@ -672,3 +672,60 @@ def test_prov_results_frame_trig(monkeypatch, tmp_path):
     assert prov_context is not None
     assert len(dataset.get_context(prov_context.identifier)) > 0
     assert len(dataset.default_context) == 0
+
+
+def test_directory_freshness_follows_files_inside(monkeypatch, tmp_path):
+    """Editing a file inside an input directory makes a directory output stale."""
+    import os
+
+    config = ProvenanceConfig(prov_dir=str(tmp_path / "prov"))
+    runs = []
+
+    @rule(name="copy_tree", config=config)
+    def copy_tree(src: InDir = InDir("src"), dst: OutDir = OutDir("dst")):
+        runs.append(1)
+        dst.mkdir(exist_ok=True)
+        for path in sorted(src.glob("*.txt")):
+            (dst / path.name).write_text(path.read_text())
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.txt").write_text("1")
+    copy_tree()
+    assert len(runs) == 1
+
+    copy_tree()
+    assert len(runs) == 1  # nothing changed
+
+    # Rewrite a file in place after the last build; the input directory's own
+    # mtime stays older than the output.
+    past = os.stat(tmp_path / "dst").st_mtime - 100
+    for path in [tmp_path / "src", tmp_path / "dst", tmp_path / "dst" / "a.txt"]:
+        os.utime(path, (past, past))
+    (tmp_path / "src" / "a.txt").write_text("2")
+    os.utime(tmp_path / "src", (past, past))
+    copy_tree()
+    assert len(runs) == 2
+    assert (tmp_path / "dst" / "a.txt").read_text() == "2"
+
+    # The run rewrote dst/a.txt in place, yet dst now counts as built after the input.
+    copy_tree()
+    assert len(runs) == 2
+
+    # Hidden files and __pycache__ in an input directory do not trigger a rebuild.
+    later = os.stat(tmp_path / "dst").st_mtime + 100
+    (tmp_path / "src" / ".DS_Store").write_text("x")
+    (tmp_path / "src" / "__pycache__").mkdir()
+    (tmp_path / "src" / "__pycache__" / "m.pyc").write_text("x")
+    for path in [tmp_path / "src" / ".DS_Store", tmp_path / "src" / "__pycache__" / "m.pyc"]:
+        os.utime(path, (later, later))
+    copy_tree()
+    assert len(runs) == 2
+
+
+def test_empty_output_directory_counts_as_missing(tmp_path):
+    from makeprov.core import needs_update
+
+    (tmp_path / "in.txt").write_text("x")
+    (tmp_path / "out").mkdir()
+    assert needs_update([tmp_path / "out"], [tmp_path / "in.txt"])
