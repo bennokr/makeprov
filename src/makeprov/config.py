@@ -57,6 +57,32 @@ class Config:
         return self
 
 
+CONTEXT_HOST = "https://bennokr.github.io/makeprov"
+
+
+def default_context_url(version: str | None = None) -> str:
+    """The published context for this release, or the latest one for a development version.
+
+    Release ``0.8.1`` gets ``context-0.8.1.jsonld``, which never changes after the release; anything else (a
+    ``.dev`` or ``+local`` build, or no installed metadata) gets ``context.jsonld``. The w3id.org redirect
+    (``w3id.htaccess``) is not the default until it is registered.
+    """
+    import re
+    from importlib.metadata import PackageNotFoundError, version as installed
+
+    if version is None:
+        try:
+            version = installed("makeprov")
+        except PackageNotFoundError:
+            version = ""
+    if re.fullmatch(r"\d+(\.\d+)*", version):
+        return f"{CONTEXT_HOST}/context-{version}.jsonld"
+    return f"{CONTEXT_HOST}/context.jsonld"
+
+
+DEFAULT_CONTEXT_URL = default_context_url()
+
+
 @dataclass
 class ProvenanceConfig(Config):
     """Runtime configuration for provenance generation."""
@@ -71,7 +97,7 @@ class ProvenanceConfig(Config):
     out_fmt: ProvFormat = "json"
     frame: Frame = "provenance"
     context: bool = False
-    context_url: str = "https://w3id.org/makeprov/context"
+    context_url: str = DEFAULT_CONTEXT_URL
     # When True (default), a failure to write provenance raises
     # ProvenanceWriteError instead of only logging a warning.
     strict: bool = True

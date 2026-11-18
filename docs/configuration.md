@@ -100,7 +100,7 @@ Pass the same ``session`` to CLI entrypoints via
 ## Context handling
 
 Set `context=true` to embed the JSON-LD context inline from `src/makeprov/context.jsonld`.  
-When `context=false`, the `@context` field is set to `context_url` (default: `https://w3id.org/makeprov/context`), so you can pin consumers to a specific published version without hard-coding it in code. Override `context_url` in a TOML snippet or file if you host the context elsewhere.
+When `context=false`, the `@context` field is set to `context_url` (default: the context published for the installed release, `https://bennokr.github.io/makeprov/context-<version>.jsonld`, or `context.jsonld` for a development build), so you can pin consumers to a specific published version without hard-coding it in code. Override `context_url` in a TOML snippet or file if you host the context elsewhere.
 
 ## Inspecting dependency graphs
 

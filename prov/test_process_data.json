@@ -1,0 +1,89 @@
+{
+  "provenance": [
+    {
+      "id": "blob:__main__.py#test_process_data-20261118T135942-87c9de88",
+      "type": "prov:Activity",
+      "startedAtTime": "2026-11-18T13:59:42.301692+00:00",
+      "endedAtTime": "2026-11-18T13:59:42.302295+00:00",
+      "duration": "PT0.000603S",
+      "wasAssociatedWith": "agent-python-3.13.18",
+      "qualifiedAssociation": "blob:__main__.py#test_process_data-20261118T135942-87c9de88-association",
+      "used": [
+        {
+          "id": "file:///tmp/pytest-of-root/pytest-40/test_process_data0/input.txt",
+          "type": "prov:Entity",
+          "format": "text/plain",
+          "extent": 13,
+          "modified": "2026-11-18T13:59:42.301514+00:00",
+          "identifier": "sha256:315f5bdb76d078c43b8ac0064e4a0164612b1fce77c869345bfc94c75894edd3",
+          "sha256": "315f5bdb76d078c43b8ac0064e4a0164612b1fce77c869345bfc94c75894edd3"
+        },
+        "env-e9f0c5c50845"
+      ],
+      "generated": [
+        "file:///tmp/pytest-of-root/pytest-40/test_process_data0/output.txt"
+      ]
+    },
+    {
+      "id": "file:///tmp/pytest-of-root/pytest-40/test_process_data0/output.txt",
+      "type": "prov:Entity",
+      "format": "text/plain",
+      "extent": 13,
+      "modified": "2026-11-18T13:59:42.302279+00:00",
+      "identifier": "sha256:315f5bdb76d078c43b8ac0064e4a0164612b1fce77c869345bfc94c75894edd3",
+      "sha256": "315f5bdb76d078c43b8ac0064e4a0164612b1fce77c869345bfc94c75894edd3",
+      "wasGeneratedBy": "blob:__main__.py#test_process_data-20261118T135942-87c9de88"
+    },
+    {
+      "id": "agent-python-3.13.18",
+      "type": [
+        "prov:Agent",
+        "prov:SoftwareAgent",
+        "schema:SoftwareApplication"
+      ],
+      "label": "CPython 3.13.18",
+      "hasVersion": "3.13.18",
+      "operatingSystem": "Ubuntu 24.04.5 LTS (x86_64)"
+    },
+    {
+      "id": "blob:__main__.py",
+      "type": [
+        "prov:Plan",
+        "prov:Entity",
+        "schema:SoftwareSourceCode"
+      ],
+      "label": "__main__.py",
+      "hasVersion": "a2618b9780a1f720f14b9f00261863c0f827f1b3-dirty",
+      "source": "https://github.com/bennokr/makeprov"
+    },
+    {
+      "id": "env-e9f0c5c50845",
+      "type": [
+        "prov:Entity",
+        "prov:Collection"
+      ],
+      "label": "Python environment",
+      "title": "makeprov",
+      "hasVersion": "0.8.1",
+      "requires": [
+        {
+          "id": "https://pypi.org/project/packaging/",
+          "type": "schema:SoftwareSourceCode",
+          "label": "packaging>=21.3"
+        },
+        {
+          "id": "https://pypi.org/project/parse/",
+          "type": "schema:SoftwareSourceCode",
+          "label": "parse>=1.20"
+        }
+      ]
+    },
+    {
+      "id": "blob:__main__.py#test_process_data-20261118T135942-87c9de88-association",
+      "type": "prov:Association",
+      "agent": "agent-python-3.13.18",
+      "hadPlan": "blob:__main__.py"
+    }
+  ],
+  "@context": "https://bennokr.github.io/makeprov/context-0.8.1.jsonld"
+}

@@ -1,0 +1,80 @@
+{
+  "provenance": [
+    {
+      "id": "agent-python-3.13.18",
+      "type": [
+        "prov:Agent",
+        "prov:SoftwareAgent",
+        "schema:SoftwareApplication"
+      ],
+      "label": "CPython 3.13.18",
+      "hasVersion": "3.13.18",
+      "operatingSystem": "Ubuntu 24.04.5 LTS (x86_64)"
+    },
+    {
+      "id": "file:///tmp/pytest-of-root/pytest-40/test_sessions_isolate_registri0/two.txt",
+      "type": "prov:Entity",
+      "format": "text/plain",
+      "extent": 3,
+      "modified": "2026-11-18T13:59:42.637081+00:00",
+      "identifier": "sha256:3fc4ccfe745870e2c0d99f71f30ff0656c8dedd41cc1d7d3d376b0dbe685e2f3",
+      "sha256": "3fc4ccfe745870e2c0d99f71f30ff0656c8dedd41cc1d7d3d376b0dbe685e2f3",
+      "wasGeneratedBy": "blob:__main__.py#isolated_two-20261118T135942-462e3874"
+    },
+    {
+      "id": "blob:__main__.py#isolated_two-20261118T135942-462e3874",
+      "type": "prov:Activity",
+      "startedAtTime": "2026-11-18T13:59:42.636918+00:00",
+      "endedAtTime": "2026-11-18T13:59:42.637106+00:00",
+      "duration": "PT0.000188S",
+      "wasAssociatedWith": "agent-python-3.13.18",
+      "qualifiedAssociation": "blob:__main__.py#isolated_two-20261118T135942-462e3874-association",
+      "used": [
+        "env-e9f0c5c50845"
+      ],
+      "generated": [
+        "file:///tmp/pytest-of-root/pytest-40/test_sessions_isolate_registri0/two.txt"
+      ]
+    },
+    {
+      "id": "blob:__main__.py#isolated_two-20261118T135942-462e3874-association",
+      "type": "prov:Association",
+      "agent": "agent-python-3.13.18",
+      "hadPlan": "blob:__main__.py"
+    },
+    {
+      "id": "blob:__main__.py",
+      "type": [
+        "prov:Plan",
+        "prov:Entity",
+        "schema:SoftwareSourceCode"
+      ],
+      "label": "__main__.py",
+      "hasVersion": "a2618b9780a1f720f14b9f00261863c0f827f1b3-dirty",
+      "source": "https://github.com/bennokr/makeprov"
+    },
+    {
+      "id": "env-e9f0c5c50845",
+      "type": [
+        "prov:Entity",
+        "prov:Collection"
+      ],
+      "label": "Python environment",
+      "title": "makeprov",
+      "hasVersion": "0.8.1",
+      "requires": [
+        {
+          "id": "https://pypi.org/project/packaging/",
+          "type": "schema:SoftwareSourceCode",
+          "label": "packaging>=21.3"
+        },
+        {
+          "id": "https://pypi.org/project/parse/",
+          "type": "schema:SoftwareSourceCode",
+          "label": "parse>=1.20"
+        }
+      ]
+    }
+  ],
+  "@context": "https://bennokr.github.io/makeprov/context-0.8.1.jsonld"
+}

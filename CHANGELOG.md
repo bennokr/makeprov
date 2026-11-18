@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- The default `context_url` pointed at `https://w3id.org/makeprov/context`, which is not registered and returns 404, so
+  a file written with `context=False` could not be read as JSON-LD. It is now the context published with the installed
+  release, `https://bennokr.github.io/makeprov/context-<version>.jsonld` (`context.jsonld` for a development build).
+  Set `context_url` to use the w3id.org address once it is registered.
+- `w3id.htaccess`: the versioned-context rule had a doubled backslash (`\\.`), which matches a literal backslash, so
+  `/context/0.8.1` never matched. Fixed, with a test of the pattern.
+
 ## 0.8.1
 
 - Fixed the up-to-date check for directories. An `InDir` used to count only

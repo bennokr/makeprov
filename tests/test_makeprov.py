@@ -729,3 +729,22 @@ def test_empty_output_directory_counts_as_missing(tmp_path):
     (tmp_path / "in.txt").write_text("x")
     (tmp_path / "out").mkdir()
     assert needs_update([tmp_path / "out"], [tmp_path / "in.txt"])
+
+
+def test_default_context_url_is_versioned_for_releases():
+    from makeprov.config import default_context_url
+
+    assert default_context_url("0.8.1") == "https://bennokr.github.io/makeprov/context-0.8.1.jsonld"
+    assert default_context_url("0.9.0.dev3") == "https://bennokr.github.io/makeprov/context.jsonld"
+    assert default_context_url("") == "https://bennokr.github.io/makeprov/context.jsonld"
+
+
+def test_htaccess_version_pattern_matches_a_version():
+    import re
+    from pathlib import Path
+
+    rules = (Path(__file__).parents[1] / "w3id.htaccess").read_text()
+    pattern = next(line.split()[1] for line in rules.splitlines() if "context-$1" in line)
+    assert re.match(pattern, "context/0.8.1")
+    assert re.match(pattern, "context/0.8.1/")
+    assert not re.match(pattern, "context/0x8y1")
