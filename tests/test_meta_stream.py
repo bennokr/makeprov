@@ -123,3 +123,46 @@ def test_failed_atomic_merge_preserves_jsonl(tmp_path, monkeypatch):
         step()
     assert path.with_suffix(".jsonl").exists()
     assert not path.with_suffix(".json").exists()
+
+
+def test_current_activity_is_the_iri_that_the_provenance_gives_the_rule(tmp_path):
+    from makeprov import current_activity
+
+    session = new_session()
+    path = tmp_path / "provenance" / "run"
+    cfg = ProvenanceConfig(prov_path=str(path), stream=True, context=True, run_id="job-7")
+    seen = {}
+
+    @rule(phony=True, session=session, config=cfg)
+    def inner():
+        seen["inner"] = current_activity(session)
+
+    @rule(config=cfg, session=session)
+    def outer(out: OutPath):
+        seen["outer"] = current_activity(session)
+        inner()
+        out.write_text("ok")
+
+    assert current_activity(session) is None
+    outer(OutPath(tmp_path / "out"))
+    assert current_activity(session) is None
+    assert seen["outer"].endswith("#outer-job-7") and seen["inner"].endswith("#inner-job-7")
+    written = {node["id"] for node in json.loads(path.with_suffix(".json").read_text())["provenance"]
+               if node.get("type") == "prov:Activity"}
+    assert seen["outer"] in written
+
+
+def test_current_activity_is_none_without_streaming(tmp_path):
+    from makeprov import current_activity
+
+    session = new_session()
+    cfg = ProvenanceConfig(prov_path=str(tmp_path / "provenance"), context=True)
+    seen = {}
+
+    @rule(config=cfg, session=session)
+    def only(out: OutPath):
+        seen["id"] = current_activity(session)
+        out.write_text("ok")
+
+    only(OutPath(tmp_path / "out"))
+    assert seen["id"] is None

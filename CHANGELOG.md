@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Added `makeprov.current_activity()`: the IRI that the written provenance gives to the rule that is running, so code
+  that a rule calls can link its own provenance to it (`prov:wasInfluencedBy`, as makeprov does for nested rules).
+  Activities get their IRI while streaming; without `stream` the result is `None`.
+
 ## 0.8.1
 
 - Fixed the up-to-date check for directories. An `InDir` used to count only

@@ -122,6 +122,19 @@ def _get_session(session: Session | None = None) -> Session:
     return session or _DEFAULT_SESSION
 
 
+def current_activity(session: Session | None = None) -> str | None:
+    """IRI of the rule that is running now, or ``None``.
+
+    The IRI is the one that the written provenance gives to the activity of the rule, so code that a rule calls can refer
+    to it (``prov:wasInfluencedBy``) in provenance of its own. Activities get their IRI while streaming
+    (``ProvenanceConfig.stream``), so with streaming off the result is ``None``, as it is outside a rule. When rules
+    call rules, the innermost one is returned.
+    """
+
+    sess = _get_session(session)
+    return sess.active_activities[-1] if sess.active_activities else None
+
+
 def new_session() -> Session:
     """Create a fresh session with isolated registries and buffers."""
 
